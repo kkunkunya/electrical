@@ -1,0 +1,202 @@
+# 负荷参数 - 基于表B2
+# Parameters of loads from Table B2
+
+loads:
+  # 节点1到33的负荷数据
+  node_1:
+    bus_id: 1
+    unit_load_shedding_cost: 1  # 元/kW - 单位负荷削减成本
+    active_power: 60  # kW - 有功功率
+    reactive_power: 30  # kvar - 无功功率
+    
+  node_2:
+    bus_id: 2
+    unit_load_shedding_cost: 1
+    active_power: 100
+    reactive_power: 60
+    
+  node_3:
+    bus_id: 3
+    unit_load_shedding_cost: 10
+    active_power: 90
+    reactive_power: 40
+    
+  node_4:
+    bus_id: 4
+    unit_load_shedding_cost: 10
+    active_power: 120
+    reactive_power: 80
+    
+  node_5:
+    bus_id: 5
+    unit_load_shedding_cost: 1
+    active_power: 60
+    reactive_power: 30
+    
+  node_6:
+    bus_id: 6
+    unit_load_shedding_cost: 10
+    active_power: 60
+    reactive_power: 20
+    
+  node_7:
+    bus_id: 7
+    unit_load_shedding_cost: 1
+    active_power: 200
+    reactive_power: 100
+    
+  node_8:
+    bus_id: 8
+    unit_load_shedding_cost: 1
+    active_power: 200
+    reactive_power: 100
+    
+  node_9:
+    bus_id: 9
+    unit_load_shedding_cost: 1
+    active_power: 60
+    reactive_power: 20
+    
+  node_10:
+    bus_id: 10
+    unit_load_shedding_cost: 10
+    active_power: 60
+    reactive_power: 20
+    
+  node_11:
+    bus_id: 11
+    unit_load_shedding_cost: 10
+    active_power: 45
+    reactive_power: 30
+    
+  node_12:
+    bus_id: 12
+    unit_load_shedding_cost: 1
+    active_power: 60
+    reactive_power: 35
+    
+  node_13:
+    bus_id: 13
+    unit_load_shedding_cost: 1
+    active_power: 60
+    reactive_power: 35
+    
+  node_14:
+    bus_id: 14
+    unit_load_shedding_cost: 1
+    active_power: 120
+    reactive_power: 80
+    
+  node_15:
+    bus_id: 15
+    unit_load_shedding_cost: 10
+    active_power: 60
+    reactive_power: 10
+    
+  node_16:
+    bus_id: 16
+    unit_load_shedding_cost: 1
+    active_power: 60
+    reactive_power: 20
+    
+  node_17:
+    bus_id: 17
+    unit_load_shedding_cost: 10
+    active_power: 60
+    reactive_power: 20
+    
+  node_18:
+    bus_id: 18
+    unit_load_shedding_cost: 1
+    active_power: 90
+    reactive_power: 40
+    
+  node_19:
+    bus_id: 19
+    unit_load_shedding_cost: 10
+    active_power: 90
+    reactive_power: 40
+    
+  node_20:
+    bus_id: 20
+    unit_load_shedding_cost: 1
+    active_power: 90
+    reactive_power: 40
+    
+  node_21:
+    bus_id: 21
+    unit_load_shedding_cost: 1
+    active_power: 90
+    reactive_power: 40
+    
+  node_22:
+    bus_id: 22
+    unit_load_shedding_cost: 1
+    active_power: 90
+    reactive_power: 40
+    
+  node_23:
+    bus_id: 23
+    unit_load_shedding_cost: 1
+    active_power: 90
+    reactive_power: 50
+    
+  node_24:
+    bus_id: 24
+    unit_load_shedding_cost: 10
+    active_power: 420
+    reactive_power: 200
+    
+  node_25:
+    bus_id: 25
+    unit_load_shedding_cost: 1
+    active_power: 420
+    reactive_power: 200
+    
+  node_26:
+    bus_id: 26
+    unit_load_shedding_cost: 10
+    active_power: 60
+    reactive_power: 25
+    
+  node_27:
+    bus_id: 27
+    unit_load_shedding_cost: 1
+    active_power: 60
+    reactive_power: 25
+    
+  node_28:
+    bus_id: 28
+    unit_load_shedding_cost: 10
+    active_power: 40
+    reactive_power: 20
+    
+  node_29:
+    bus_id: 29
+    unit_load_shedding_cost: 1
+    active_power: 120
+    reactive_power: 70
+    
+  node_30:
+    bus_id: 30
+    unit_load_shedding_cost: 1
+    active_power: 200
+    reactive_power: 600
+    
+  node_31:
+    bus_id: 31
+    unit_load_shedding_cost: 1
+    active_power: 150
+    reactive_power: 70
+    
+  node_32:
+    bus_id: 32
+    unit_load_shedding_cost: 1
+    active_power: 210
+    reactive_power: 100
+    
+  node_33:
+    bus_id: 33
+    unit_load_shedding_cost: 10
+    active_power: 60
+    reactive_power: 40

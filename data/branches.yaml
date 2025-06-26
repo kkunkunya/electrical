@@ -1,0 +1,237 @@
+branches:
+  branch_1_2:
+    from_bus: 1
+    to_bus: 2
+    resistance: 0.0922
+    reactance: 0.047
+    capacity: 400
+    max_current: 400
+  branch_2_3:
+    from_bus: 2
+    to_bus: 3
+    resistance: 0.493
+    reactance: 0.2511
+    capacity: 400
+    max_current: 400
+  branch_3_4:
+    from_bus: 3
+    to_bus: 4
+    resistance: 0.366
+    reactance: 0.1864
+    capacity: 400
+    max_current: 400
+  branch_4_5:
+    from_bus: 4
+    to_bus: 5
+    resistance: 0.3811
+    reactance: 0.1941
+    capacity: 400
+    max_current: 400
+  branch_5_6:
+    from_bus: 5
+    to_bus: 6
+    resistance: 0.819
+    reactance: 0.707
+    capacity: 400
+    max_current: 400
+  branch_6_7:
+    from_bus: 6
+    to_bus: 7
+    resistance: 0.1872
+    reactance: 0.6188
+    capacity: 400
+    max_current: 400
+  branch_7_8:
+    from_bus: 7
+    to_bus: 8
+    resistance: 0.7114
+    reactance: 0.2351
+    capacity: 400
+    max_current: 400
+  branch_8_9:
+    from_bus: 8
+    to_bus: 9
+    resistance: 1.03
+    reactance: 0.74
+    capacity: 400
+    max_current: 400
+  branch_9_10:
+    from_bus: 9
+    to_bus: 10
+    resistance: 1.044
+    reactance: 0.74
+    capacity: 400
+    max_current: 400
+  branch_10_11:
+    from_bus: 10
+    to_bus: 11
+    resistance: 0.1966
+    reactance: 0.065
+    capacity: 400
+    max_current: 400
+  branch_11_12:
+    from_bus: 11
+    to_bus: 12
+    resistance: 0.3744
+    reactance: 0.1238
+    capacity: 400
+    max_current: 400
+  branch_12_13:
+    from_bus: 12
+    to_bus: 13
+    resistance: 1.468
+    reactance: 1.155
+    capacity: 400
+    max_current: 400
+  branch_13_14:
+    from_bus: 13
+    to_bus: 14
+    resistance: 0.5416
+    reactance: 0.7129
+    capacity: 400
+    max_current: 400
+  branch_14_15:
+    from_bus: 14
+    to_bus: 15
+    resistance: 0.591
+    reactance: 0.526
+    capacity: 400
+    max_current: 400
+  branch_15_16:
+    from_bus: 15
+    to_bus: 16
+    resistance: 0.7463
+    reactance: 0.545
+    capacity: 400
+    max_current: 400
+  branch_16_17:
+    from_bus: 16
+    to_bus: 17
+    resistance: 1.289
+    reactance: 1.721
+    capacity: 400
+    max_current: 400
+  branch_17_18:
+    from_bus: 17
+    to_bus: 18
+    resistance: 0.32
+    reactance: 0.574
+    capacity: 400
+    max_current: 400
+  branch_2_19:
+    from_bus: 2
+    to_bus: 19
+    resistance: 0.164
+    reactance: 0.1565
+    capacity: 400
+    max_current: 400
+  branch_19_20:
+    from_bus: 19
+    to_bus: 20
+    resistance: 1.5042
+    reactance: 1.3554
+    capacity: 400
+    max_current: 400
+  branch_20_21:
+    from_bus: 20
+    to_bus: 21
+    resistance: 0.4095
+    reactance: 0.4784
+    capacity: 400
+    max_current: 400
+  branch_21_22:
+    from_bus: 21
+    to_bus: 22
+    resistance: 0.7089
+    reactance: 0.9373
+    capacity: 400
+    max_current: 400
+  branch_3_23:
+    from_bus: 3
+    to_bus: 23
+    resistance: 0.4512
+    reactance: 0.3083
+    capacity: 400
+    max_current: 400
+  branch_23_24:
+    from_bus: 23
+    to_bus: 24
+    resistance: 0.898
+    reactance: 0.7091
+    capacity: 400
+    max_current: 400
+  branch_24_25:
+    from_bus: 24
+    to_bus: 25
+    resistance: 0.896
+    reactance: 0.7011
+    capacity: 400
+    max_current: 400
+  branch_6_26:
+    from_bus: 6
+    to_bus: 26
+    resistance: 0.203
+    reactance: 0.1034
+    capacity: 400
+    max_current: 400
+  branch_26_27:
+    from_bus: 26
+    to_bus: 27
+    resistance: 0.2842
+    reactance: 0.1447
+    capacity: 400
+    max_current: 400
+  branch_27_28:
+    from_bus: 27
+    to_bus: 28
+    resistance: 1.059
+    reactance: 0.9337
+    capacity: 400
+    max_current: 400
+  branch_28_29:
+    from_bus: 28
+    to_bus: 29
+    resistance: 0.8042
+    reactance: 0.7006
+    capacity: 400
+    max_current: 400
+  branch_29_30:
+    from_bus: 29
+    to_bus: 30
+    resistance: 0.5075
+    reactance: 0.2585
+    capacity: 400
+    max_current: 400
+  branch_30_31:
+    from_bus: 30
+    to_bus: 31
+    resistance: 0.9744
+    reactance: 0.963
+    capacity: 400
+    max_current: 400
+  branch_31_32:
+    from_bus: 31
+    to_bus: 32
+    resistance: 0.3105
+    reactance: 0.3619
+    capacity: 400
+    max_current: 400
+  branch_32_33:
+    from_bus: 32
+    to_bus: 33
+    resistance: 0.341
+    reactance: 0.5302
+    capacity: 400
+    max_current: 400
+system_parameters:
+  nominal_voltage: 12.66
+  base_voltage: 12.66
+  voltage_upper_limit: 13.92
+  voltage_lower_limit: 11.39
+  min_voltage: 11.39
+  max_voltage: 13.92
+  mobile_storage_unit_cost: 500
+  mobile_storage_installation_time: 0.5
+  mobile_storage_ideal_speed: 25
+  uncertainty_factor: 0.35
+  constant_epsilon: 4

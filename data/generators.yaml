@@ -1,0 +1,98 @@
+# 电源参数 - 基于表B1
+# Parameters of generators from Table B1
+
+deg_generators:
+  # 分布式发电机 - 传统发电机
+  DEG1:
+    type: "DEG"  # Distributed Energy Generator
+    active_power_max: 120  # kW
+    reactive_power_max: 100  # kvar
+    charging_efficiency: null
+    storage_capacity: null  # kW·h
+  
+  DEG2:
+    type: "DEG"
+    active_power_max: 120  # kW
+    reactive_power_max: 100  # kvar
+    charging_efficiency: null
+    storage_capacity: null  # kW·h
+  
+  DEG3:
+    type: "DEG"
+    active_power_max: 120  # kW
+    reactive_power_max: 100  # kvar
+    charging_efficiency: null
+    storage_capacity: null  # kW·h
+    
+  DEG4:
+    type: "DEG"
+    active_power_max: 80  # kW
+    reactive_power_max: 60  # kvar
+    charging_efficiency: null
+    storage_capacity: null  # kW·h
+    
+  DEG5:
+    type: "DEG"
+    active_power_max: 80  # kW
+    reactive_power_max: 60  # kvar
+    charging_efficiency: null
+    storage_capacity: null  # kW·h
+
+mess_generators:
+  # 移动储能系统
+  MESS:
+    type: "MESS"  # Mobile Energy Storage System
+    active_power_max: 200  # kW (充放电)
+    reactive_power_max: 170  # kvar
+    charging_efficiency: 0.98
+    storage_capacity: 600  # kW·h
+
+evs_generators:
+  # 电动汽车储能系统
+  EVS1:
+    type: "EVS"  # Electric Vehicle Storage
+    active_power_max: 60  # kW (充放电)
+    reactive_power_max: 50  # kvar
+    charging_efficiency: 0.98
+    storage_capacity: 120  # kW·h
+    
+  EVS2:
+    type: "EVS"
+    active_power_max: 60  # kW (充放电)
+    reactive_power_max: 50  # kvar
+    charging_efficiency: 0.98
+    storage_capacity: 120  # kW·h
+    
+  EVS3:
+    type: "EVS"
+    active_power_max: 60  # kW (充放电)
+    reactive_power_max: 50  # kvar
+    charging_efficiency: 0.98
+    storage_capacity: 120  # kW·h
+
+pv_generators:
+  # 光伏发电系统 - 基于表B4
+  PV1:
+    type: "PV"  # Photovoltaic
+    active_power_max: 120  # kW - 最大功率等于预测功率
+    predicted_power: 120  # kW - 灾前预测出力
+    
+  PV2:
+    type: "PV"
+    active_power_max: 240  # kW
+    predicted_power: 240  # kW
+    
+  PV3:
+    type: "PV"
+    active_power_max: 360  # kW
+    predicted_power: 360  # kW
+    
+  PV4:
+    type: "PV"
+    active_power_max: 360  # kW
+    predicted_power: 360  # kW
+    
+  PV5:
+    type: "PV"
+    active_power_max: 180  # kW
+    predicted_power: 180  # kW
