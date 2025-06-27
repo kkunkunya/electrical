@@ -16,6 +16,7 @@ sys.path.insert(0, str(project_root))
 from src.datasets.loader import load_system_data
 from src.models.post_disaster_static import PostDisasterStaticModel
 from src.models.post_disaster_static_v2 import PostDisasterStaticModelV2
+from src.models.post_disaster_dynamic_multi_period import PostDisasterDynamicModel
 from src.powerflow.distflow import DistFlowSolver
 from src.powerflow import visualization
 
@@ -102,6 +103,63 @@ def cmd_post_static(args):
             print(f"\n问题描述已保存到: {args.out}")
     else:
         print("求解失败!")
+
+
+def cmd_post_dynamic(args):
+    """运行灾后多时段动态调度优化"""
+    # 加载数据
+    data_dir = Path(args.data_dir)
+    data = load_system_data(str(data_dir))
+    
+    print("使用多时段动态调度模型（含移动储能时空调度）")
+    
+    # 时变数据路径
+    traffic_file = str(data_dir / "traffic_profile.csv")
+    pv_file = str(data_dir / "pv_profile.csv")
+    
+    # 创建模型
+    model = PostDisasterDynamicModel(
+        system_data=data,
+        n_periods=args.periods,
+        start_hour=args.start_hour,
+        traffic_profile_path=traffic_file,
+        pv_profile_path=pv_file
+    )
+    
+    print(f"模型规模: {model.n_periods}时段, {model.n_buses}节点, {model.n_mess}个移动储能")
+    print(f"变量数: {model.problem.size_metrics.num_scalar_variables}")
+    
+    # 求解
+    results = model.solve(verbose=args.verbose)
+    
+    if results:
+        print(f"\n求解成功!")
+        print(f"目标函数值: {results['objective']:.2f} 元")
+        print(f"总负荷削减: {results.get('total_load_shed', 0):.2f} kW")
+        
+        # 输出结果文件
+        if args.out:
+            model.write_lp(args.out)
+            print(f"\n模型描述已保存到: {args.out}")
+            
+        # 保存详细结果
+        if args.save_results:
+            import json
+            output_file = args.save_results
+            
+            # 处理numpy数组使其可JSON序列化
+            serializable_results = {}
+            for key, value in results.items():
+                if isinstance(value, (list, dict, str, int, float, bool)):
+                    serializable_results[key] = value
+                else:
+                    serializable_results[key] = str(value)
+            
+            with open(output_file, 'w', encoding='utf-8') as f:
+                json.dump(serializable_results, f, ensure_ascii=False, indent=2)
+            print(f"详细结果已保存到: {output_file}")
+    else:
+        print("求解失败!")
         
 
 def main():
@@ -172,6 +230,38 @@ def main():
         help='模型版本 (1: Demo1基础版, 2: Demo2含MESS和DEG)'
     )
     parser_post_static.set_defaults(func=cmd_post_static)
+    
+    # post-dynamic子命令 (新增)
+    parser_post_dynamic = subparsers.add_parser(
+        'post-dynamic',
+        help='运行灾后多时段动态调度优化 (Demo 1)'
+    )
+    parser_post_dynamic.add_argument(
+        '--data-dir',
+        default='data',
+        help='数据目录路径 (默认: data)'
+    )
+    parser_post_dynamic.add_argument(
+        '--periods',
+        type=int,
+        default=21,
+        help='时间段数量 (默认: 21, 即3:00-23:00)'
+    )
+    parser_post_dynamic.add_argument(
+        '--start-hour',
+        type=int,
+        default=3,
+        help='起始小时 (默认: 3)'
+    )
+    parser_post_dynamic.add_argument(
+        '--out',
+        help='输出模型描述文件路径 (例如: demo1_model.lp)'
+    )
+    parser_post_dynamic.add_argument(
+        '--save-results',
+        help='保存详细结果的JSON文件路径 (例如: demo1_results.json)'
+    )
+    parser_post_dynamic.set_defaults(func=cmd_post_dynamic)
     
     # 解析参数
     args = parser.parse_args()
