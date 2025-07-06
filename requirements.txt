@@ -17,6 +17,18 @@ scipy>=1.9.0
 matplotlib>=3.5.0
 seaborn>=0.11.0
 
+# G2MILP图处理依赖
+networkx>=2.8.0  # 图算法和网络分析
+h5py>=3.7.0      # HDF5文件格式支持 (可选，大规模数据)
+plotly>=5.11.0   # 交互式可视化 (可选)
+
+# PyTorch深度学习生态 (Demo 4 G2MILP需要)
+torch>=1.13.0
+torch-geometric>=2.2.0  # 图神经网络库
+dgl>=1.0.0              # 替代图神经网络库 (可选)
+torchvision>=0.14.0     # 视觉工具 (可选)
+torchaudio>=0.13.0      # 音频工具 (可选)
+
 # Jupyter支持
 jupyter>=1.0.0
 ipykernel>=6.0.0

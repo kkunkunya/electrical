@@ -404,7 +404,7 @@ class BipartiteGraphSerializer:
                 G.add_node(var_id, 
                           bipartite=0,  # 变量节点集合
                           node_type='variable',
-                          var_type=var_node.var_type.value,
+                          var_type=var_node.var_type.value if hasattr(var_node.var_type, 'value') else var_node.var_type,
                           lower_bound=var_node.lower_bound,
                           upper_bound=var_node.upper_bound,
                           obj_coeff=var_node.obj_coeff,

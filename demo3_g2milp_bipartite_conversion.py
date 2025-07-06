@@ -411,7 +411,7 @@ class G2MILPBipartiteConverter:
         
         test_passed = constraint_nodes_match and variable_nodes_match
         validation_report['tests'][test_name] = {
-            'passed': test_passed,
+            'passed': bool(test_passed),
             'details': {
                 'constraint_nodes_bipartite': len(self.bipartite_graph.constraint_nodes),
                 'constraint_nodes_milp': self.milp_form.n_constraints,
@@ -430,17 +430,23 @@ class G2MILPBipartiteConverter:
         test_name = "变量节点9维特征"
         logger.info(f"🔍 验证测试: {test_name}")
         
-        var_features = self.bipartite_graph.variable_feature_matrix
+        # 构建变量特征矩阵
+        var_features = []
+        for var_node in self.bipartite_graph.variable_nodes.values():
+            feature_vector = var_node.get_feature_vector()
+            var_features.append(feature_vector)
+        var_features = np.array(var_features)
+        
         has_9_dimensions = (var_features.shape[1] == 9)
         has_valid_var_types = np.all(np.isin(var_features[:, 0], [0, 1, 2]))  # 连续, 二进制, 整数
         
         test_passed = has_9_dimensions and has_valid_var_types
         validation_report['tests'][test_name] = {
-            'passed': test_passed,
+            'passed': bool(test_passed),
             'details': {
-                'feature_dimensions': var_features.shape[1],
+                'feature_dimensions': int(var_features.shape[1]),
                 'expected_dimensions': 9,
-                'variable_types_valid': has_valid_var_types,
+                'variable_types_valid': bool(has_valid_var_types),
                 'unique_var_types': np.unique(var_features[:, 0]).tolist()
             }
         }
@@ -470,7 +476,7 @@ class G2MILPBipartiteConverter:
         
         test_passed = matrix_consistent
         validation_report['tests'][test_name] = {
-            'passed': test_passed,
+            'passed': bool(test_passed),
             'details': {
                 'max_difference': float(matrix_diff),
                 'tolerance': 1e-10,
@@ -495,12 +501,12 @@ class G2MILPBipartiteConverter:
         else:
             original_nnz = np.count_nonzero(original_A)
         
-        bipartite_edges = self.bipartite_graph.n_edges
+        bipartite_edges = len(self.bipartite_graph.edges)
         sparsity_consistent = (original_nnz == bipartite_edges)
         
         test_passed = sparsity_consistent
         validation_report['tests'][test_name] = {
-            'passed': test_passed,
+            'passed': bool(test_passed),
             'details': {
                 'original_nnz': int(original_nnz),
                 'bipartite_edges': int(bipartite_edges),
@@ -518,15 +524,15 @@ class G2MILPBipartiteConverter:
         test_name = "目标函数系数一致性"
         logger.info(f"🔍 验证测试: {test_name}")
         
-        original_c = self.milp_form.objective_coeffs
-        bipartite_c = var_features[:, 1]  # 第2列是目标函数系数
+        original_c = self.milp_form.objective_coefficients
+        bipartite_c = var_features[:, 3]  # 第4列是目标函数系数（索引3）
         
         coeff_diff = np.max(np.abs(original_c - bipartite_c))
         coeffs_consistent = coeff_diff < 1e-10
         
         test_passed = coeffs_consistent
         validation_report['tests'][test_name] = {
-            'passed': test_passed,
+            'passed': bool(test_passed),
             'details': {
                 'max_difference': float(coeff_diff),
                 'tolerance': 1e-10
@@ -567,16 +573,20 @@ class G2MILPBipartiteConverter:
     
     def _reconstruct_constraint_matrix(self) -> np.ndarray:
         """从二分图重构约束矩阵"""
-        n_constraints = self.bipartite_graph.n_constraint_nodes
-        n_variables = self.bipartite_graph.n_variable_nodes
+        n_constraints = len(self.bipartite_graph.constraint_nodes)
+        n_variables = len(self.bipartite_graph.variable_nodes)
+        
+        # 创建节点ID到索引的映射
+        constraint_id_to_idx = {cid: i for i, cid in enumerate(self.bipartite_graph.constraint_nodes.keys())}
+        variable_id_to_idx = {vid: i for i, vid in enumerate(self.bipartite_graph.variable_nodes.keys())}
         
         # 初始化重构矩阵
         reconstructed_A = np.zeros((n_constraints, n_variables))
         
         # 从边填充矩阵
-        for edge in self.bipartite_graph.edges:
-            constraint_idx = edge.constraint_node.node_id
-            variable_idx = edge.variable_node.node_id
+        for edge in self.bipartite_graph.edges.values():
+            constraint_idx = constraint_id_to_idx[edge.constraint_node_id]
+            variable_idx = variable_id_to_idx[edge.variable_node_id]
             coefficient = edge.coefficient
             
             reconstructed_A[constraint_idx, variable_idx] = coefficient
@@ -619,9 +629,9 @@ class G2MILPBipartiteConverter:
                 'extraction_success': True
             },
             'milp_to_bipartite': {
-                'constraint_nodes_created': self.bipartite_graph.n_constraint_nodes,
-                'variable_nodes_created': self.bipartite_graph.n_variable_nodes,
-                'edges_created': self.bipartite_graph.n_edges,
+                'constraint_nodes_created': len(self.bipartite_graph.constraint_nodes),
+                'variable_nodes_created': len(self.bipartite_graph.variable_nodes),
+                'edges_created': len(self.bipartite_graph.edges),
                 'graph_construction_success': True
             }
         }
@@ -629,13 +639,24 @@ class G2MILPBipartiteConverter:
         # G2MILP合规性分析
         logger.info("📊 分析G2MILP合规性...")
         
-        var_features = self.bipartite_graph.variable_feature_matrix
-        const_features = self.bipartite_graph.constraint_feature_matrix
+        # 构建变量特征矩阵
+        var_features = []
+        for var_node in self.bipartite_graph.variable_nodes.values():
+            feature_vector = var_node.get_feature_vector()
+            var_features.append(feature_vector)
+        var_features = np.array(var_features)
+        
+        # 构建约束特征矩阵
+        const_features = []
+        for const_node in self.bipartite_graph.constraint_nodes.values():
+            feature_vector = const_node.get_constraint_features()
+            const_features.append(feature_vector)
+        const_features = np.array(const_features)
         
         analysis_report['g2milp_compliance'] = {
             'bipartite_structure': {
-                'has_constraint_vertices': self.bipartite_graph.n_constraint_nodes > 0,
-                'has_variable_vertices': self.bipartite_graph.n_variable_nodes > 0,
+                'has_constraint_vertices': len(self.bipartite_graph.constraint_nodes) > 0,
+                'has_variable_vertices': len(self.bipartite_graph.variable_nodes) > 0,
                 'edges_connect_different_types': True  # 在构建时已保证
             },
             'node_features': {
@@ -653,26 +674,26 @@ class G2MILPBipartiteConverter:
         # 性能指标分析
         logger.info("📊 分析性能指标...")
         
-        total_nodes = self.bipartite_graph.n_constraint_nodes + self.bipartite_graph.n_variable_nodes
+        total_nodes = len(self.bipartite_graph.constraint_nodes) + len(self.bipartite_graph.variable_nodes)
         graph_density = self.bipartite_graph.statistics.density
         
         analysis_report['performance_metrics'] = {
             'graph_size': {
                 'total_nodes': total_nodes,
-                'constraint_nodes': self.bipartite_graph.n_constraint_nodes,
-                'variable_nodes': self.bipartite_graph.n_variable_nodes,
-                'total_edges': self.bipartite_graph.n_edges,
+                'constraint_nodes': len(self.bipartite_graph.constraint_nodes),
+                'variable_nodes': len(self.bipartite_graph.variable_nodes),
+                'total_edges': len(self.bipartite_graph.edges),
                 'density': graph_density
             },
             'sparsity_analysis': {
-                'is_sparse': graph_density < 0.1,
+                'is_sparse': bool(graph_density < 0.1),
                 'sparsity_level': 'high' if graph_density < 0.01 else 'medium' if graph_density < 0.1 else 'low',
                 'memory_efficiency': 'good' if graph_density < 0.1 else 'moderate'
             },
             'scalability_assessment': {
                 'node_count_category': 'small' if total_nodes < 1000 else 'medium' if total_nodes < 10000 else 'large',
                 'complexity_level': 'low' if total_nodes < 1000 and graph_density < 0.1 else 'medium',
-                'gnn_friendly': total_nodes < 50000 and graph_density < 0.2
+                'gnn_friendly': bool(total_nodes < 50000 and graph_density < 0.2)
             }
         }
         
@@ -689,21 +710,21 @@ class G2MILPBipartiteConverter:
             var_feature_quality[feature_name] = {
                 'range': [float(np.min(values)), float(np.max(values))],
                 'std_dev': float(np.std(values)),
-                'has_variance': np.std(values) > 1e-10,
+                'has_variance': bool(np.std(values) > 1e-10),
                 'distribution_spread': 'good' if np.std(values) > 1e-6 else 'poor'
             }
         
         # 约束特征分析
         const_feature_quality = {
             'bias_terms': {
-                'range': [float(np.min(const_features[:, 1])), float(np.max(const_features[:, 1]))],
-                'std_dev': float(np.std(const_features[:, 1])),
-                'has_variance': np.std(const_features[:, 1]) > 1e-10
+                'range': [float(np.min(const_features[:, 4])), float(np.max(const_features[:, 4]))],  # 右侧值在索引4
+                'std_dev': float(np.std(const_features[:, 4])),
+                'has_variance': bool(np.std(const_features[:, 4]) > 1e-10)
             },
             'degree_distribution': {
-                'mean_degree': float(np.mean(const_features[:, 11])),
-                'max_degree': float(np.max(const_features[:, 11])),
-                'degree_variance': float(np.var(const_features[:, 11]))
+                'mean_degree': float(np.mean(const_features[:, 2])),  # 度数在索引2
+                'max_degree': float(np.max(const_features[:, 2])),
+                'degree_variance': float(np.var(const_features[:, 2]))
             }
         }
         
@@ -751,7 +772,7 @@ class G2MILPBipartiteConverter:
         
         # 打印关键发现
         logger.info("🔍 关键发现:")
-        logger.info(f"  图规模: {total_nodes} 节点, {self.bipartite_graph.n_edges} 边")
+        logger.info(f"  图规模: {total_nodes} 节点, {len(self.bipartite_graph.edges)} 边")
         logger.info(f"  图密度: {graph_density:.6f} ({'稀疏' if graph_density < 0.1 else '稠密'})")
         logger.info(f"  GNN友好性: {'是' if analysis_report['performance_metrics']['scalability_assessment']['gnn_friendly'] else '否'}")
         logger.info(f"  建议数量: {len(recommendations)}")
@@ -766,9 +787,9 @@ class G2MILPBipartiteConverter:
         logger.info("步骤 6: 创建可视化图表")
         logger.info("="*60)
         
-        # 设置matplotlib参数
+        # 设置matplotlib参数 - Use English for all text
         plt.style.use('default')
-        plt.rcParams['font.sans-serif'] = ['SimHei', 'Arial Unicode MS', 'DejaVu Sans']
+        plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial', 'sans-serif']
         plt.rcParams['axes.unicode_minus'] = False
         
         viz_dir = self.output_dir / "visualizations"
@@ -777,42 +798,49 @@ class G2MILPBipartiteConverter:
         logger.info("📊 创建图结构统计可视化...")
         
         fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-        fig.suptitle('G2MILP二分图结构分析', fontsize=16, fontweight='bold')
+        fig.suptitle('G2MILP Bipartite Graph Structure Analysis', fontsize=16, fontweight='bold')
         
-        # 节点度数分布
-        constraint_degrees = self.bipartite_graph.constraint_feature_matrix[:, 11]
-        variable_degrees = self.bipartite_graph.variable_feature_matrix[:, 4]
+        # 节点度数分布 - 从节点直接获取度数
+        constraint_degrees = [node.degree for node in self.bipartite_graph.constraint_nodes.values()]
+        variable_degrees = [node.degree for node in self.bipartite_graph.variable_nodes.values()]
         
-        axes[0, 0].hist(constraint_degrees, bins=20, alpha=0.7, label='约束节点', color='skyblue')
-        axes[0, 0].hist(variable_degrees, bins=20, alpha=0.7, label='变量节点', color='lightcoral')
-        axes[0, 0].set_xlabel('节点度数')
-        axes[0, 0].set_ylabel('频数')
-        axes[0, 0].set_title('节点度数分布')
+        axes[0, 0].hist(constraint_degrees, bins=20, alpha=0.7, label='Constraint Nodes', color='skyblue')
+        axes[0, 0].hist(variable_degrees, bins=20, alpha=0.7, label='Variable Nodes', color='lightcoral')
+        axes[0, 0].set_xlabel('Node Degree')
+        axes[0, 0].set_ylabel('Frequency')
+        axes[0, 0].set_title('Node Degree Distribution')
         axes[0, 0].legend()
         axes[0, 0].grid(True, alpha=0.3)
         
         # 变量类型分布
-        var_types = self.bipartite_graph.variable_feature_matrix[:, 0]
-        type_names = ['连续', '二进制', '整数']
+        var_types = []
+        for var_node in self.bipartite_graph.variable_nodes.values():
+            feature_vector = var_node.get_feature_vector()
+            var_types.append(feature_vector[0])
+        var_types = np.array(var_types)
+        type_names = ['Continuous', 'Binary', 'Integer']
         type_counts = [np.sum(var_types == i) for i in range(3)]
         
         axes[0, 1].pie(type_counts, labels=type_names, autopct='%1.1f%%', startangle=90)
-        axes[0, 1].set_title('变量类型分布')
+        axes[0, 1].set_title('Variable Type Distribution')
         
         # 目标函数系数分布
-        obj_coeffs = self.bipartite_graph.variable_feature_matrix[:, 1]
+        obj_coeffs = []
+        for var_node in self.bipartite_graph.variable_nodes.values():
+            feature_vector = var_node.get_feature_vector()
+            obj_coeffs.append(feature_vector[3])  # 目标系数在索引3
         axes[1, 0].hist(obj_coeffs, bins=30, alpha=0.7, color='green')
-        axes[1, 0].set_xlabel('目标函数系数值')
-        axes[1, 0].set_ylabel('频数')
-        axes[1, 0].set_title('目标函数系数分布')
+        axes[1, 0].set_xlabel('Objective Coefficient Value')
+        axes[1, 0].set_ylabel('Frequency')
+        axes[1, 0].set_title('Objective Coefficient Distribution')
         axes[1, 0].grid(True, alpha=0.3)
         
         # 约束右侧值分布
-        rhs_values = self.bipartite_graph.constraint_feature_matrix[:, 1]
+        rhs_values = [node.rhs_value for node in self.bipartite_graph.constraint_nodes.values()]
         axes[1, 1].hist(rhs_values, bins=30, alpha=0.7, color='orange')
-        axes[1, 1].set_xlabel('约束右侧值')
-        axes[1, 1].set_ylabel('频数')
-        axes[1, 1].set_title('约束右侧值分布')
+        axes[1, 1].set_xlabel('RHS Value')
+        axes[1, 1].set_ylabel('Frequency')
+        axes[1, 1].set_title('Constraint RHS Distribution')
         axes[1, 1].grid(True, alpha=0.3)
         
         plt.tight_layout()
@@ -826,19 +854,47 @@ class G2MILPBipartiteConverter:
         logger.info("📊 创建特征质量分析可视化...")
         
         fig, axes = plt.subplots(2, 3, figsize=(15, 10))
-        fig.suptitle('G2MILP特征质量分析', fontsize=16, fontweight='bold')
+        fig.suptitle('G2MILP Feature Quality Analysis', fontsize=16, fontweight='bold')
         
-        var_features = self.bipartite_graph.variable_feature_matrix
-        feature_names = ["变量类型", "目标系数", "下界", "上界", "度数", "系数均值"]
+        # 构建变量特征矩阵
+        var_features = []
+        for var_node in self.bipartite_graph.variable_nodes.values():
+            feature_vector = var_node.get_feature_vector()
+            var_features.append(feature_vector)
+        var_features = np.array(var_features)
+        
+        feature_names = ["Variable Type", "Lower Bound", "Upper Bound", "Objective Coeff", "Has Lower Bound", "Has Upper Bound"]
         
         for i, (ax, name) in enumerate(zip(axes.flat[:6], feature_names)):
             if i < 6:
                 values = var_features[:, i]
-                ax.hist(values, bins=20, alpha=0.7, color=f'C{i}')
-                ax.set_xlabel(name)
-                ax.set_ylabel('频数')
-                ax.set_title(f'{name}分布')
-                ax.grid(True, alpha=0.3)
+                
+                # 过滤无限值和NaN值
+                finite_values = values[np.isfinite(values)]
+                
+                if len(finite_values) > 0:
+                    # 检查是否有足够的数据变化进行直方图
+                    if np.std(finite_values) > 1e-10:
+                        ax.hist(finite_values, bins=20, alpha=0.7, color=f'C{i}')
+                        ax.set_xlabel(name)
+                        ax.set_ylabel('Frequency')
+                        ax.set_title(f'{name} Distribution')
+                        ax.grid(True, alpha=0.3)
+                    else:
+                        # 所有值相同，显示单一值信息
+                        ax.text(0.5, 0.5, f'All values: {finite_values[0]:.3f}\n(No variation)', 
+                               ha='center', va='center', transform=ax.transAxes, fontsize=10)
+                        ax.set_title(f'{name} (Constant)')
+                        ax.set_xticks([])
+                        ax.set_yticks([])
+                else:
+                    # 没有有限值，显示警告信息
+                    ax.text(0.5, 0.5, f'No finite values\n(All inf/NaN)', 
+                           ha='center', va='center', transform=ax.transAxes, fontsize=10, color='red')
+                    ax.set_title(f'{name} (Invalid Data)')
+                    ax.set_xticks([])
+                    ax.set_yticks([])
+                    logger.warning(f"特征 '{name}' 包含所有无限值或NaN，跳过可视化")
         
         plt.tight_layout()
         feature_quality_path = viz_dir / "feature_quality_analysis.png"
@@ -869,10 +925,10 @@ class G2MILPBipartiteConverter:
         
         plt.figure(figsize=(12, 8))
         plt.imshow(A_sample != 0, cmap='Blues', aspect='auto')
-        plt.title('约束矩阵稀疏性模式 (蓝色=非零元素)', fontsize=14, fontweight='bold')
-        plt.xlabel('变量索引')
-        plt.ylabel('约束索引')
-        plt.colorbar(label='非零元素')
+        plt.title('Constraint Matrix Sparsity Pattern (Blue = Non-zero Elements)', fontsize=14, fontweight='bold')
+        plt.xlabel('Variable Index')
+        plt.ylabel('Constraint Index')
+        plt.colorbar(label='Non-zero Elements')
         
         density_heatmap_path = viz_dir / "constraint_matrix_density.png"
         plt.savefig(density_heatmap_path, dpi=300, bbox_inches='tight')
@@ -912,9 +968,9 @@ class G2MILPBipartiteConverter:
                 },
                 
                 'g2milp_bipartite_graph': {
-                    'constraint_nodes': bipartite_graph.n_constraint_nodes,
-                    'variable_nodes': bipartite_graph.n_variable_nodes,
-                    'edges': bipartite_graph.n_edges,
+                    'constraint_nodes': len(bipartite_graph.constraint_nodes),
+                    'variable_nodes': len(bipartite_graph.variable_nodes),
+                    'edges': len(bipartite_graph.edges),
                     'density': bipartite_graph.statistics.density,
                     'avg_constraint_degree': bipartite_graph.statistics.avg_constraint_degree,
                     'avg_variable_degree': bipartite_graph.statistics.avg_variable_degree
@@ -954,8 +1010,8 @@ class G2MILPBipartiteConverter:
             logger.info(f"  • CVXPY问题 → MILP标准形式 ✅")
             logger.info(f"  • MILP标准形式 → G2MILP二分图 ✅")
             logger.info(f"  • 验证状态: {validation_report['overall_status']} ({validation_report['overall_score']:.1%})")
-            logger.info(f"  • 二分图节点: {bipartite_graph.n_constraint_nodes} 约束 + {bipartite_graph.n_variable_nodes} 变量")
-            logger.info(f"  • 二分图边数: {bipartite_graph.n_edges}")
+            logger.info(f"  • 二分图节点: {len(bipartite_graph.constraint_nodes)} 约束 + {len(bipartite_graph.variable_nodes)} 变量")
+            logger.info(f"  • 二分图边数: {len(bipartite_graph.edges)}")
             logger.info(f"  • 图密度: {bipartite_graph.statistics.density:.6f}")
             logger.info(f"  • G2MILP合规性: {'是' if demo3_summary['technical_analysis']['g2milp_compliant'] else '否'}")
             logger.info("="*80)

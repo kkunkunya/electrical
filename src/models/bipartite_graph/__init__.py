@@ -22,9 +22,9 @@ from .data_structures import (
     GraphStatistics
 )
 
-from .extractor import CVXPYToMILPExtractor
+from .extractor import CVXPYToMILPExtractor, MILPStandardForm
 from .builder import BipartiteGraphBuilder
-from .converter import G2MILPConverter
+from .converter import G2MILPConverter, ConversionConfig
 from .serializer import BipartiteGraphSerializer
 from .visualizer import BipartiteGraphVisualizer
 from .validator import BipartiteGraphValidator
@@ -38,11 +38,13 @@ __all__ = [
     'VariableType',
     'ConstraintType',
     'GraphStatistics',
+    'MILPStandardForm',
     
     # 核心组件
     'CVXPYToMILPExtractor',
     'BipartiteGraphBuilder',
     'G2MILPConverter',
+    'ConversionConfig',
     'BipartiteGraphSerializer',
     'BipartiteGraphVisualizer',
     'BipartiteGraphValidator'
