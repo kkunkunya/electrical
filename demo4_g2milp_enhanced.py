@@ -115,125 +115,128 @@ def create_enhanced_configs(quick_test: bool = False) -> Dict[str, Any]:
         min_constraint_degree=1
     )
     
-    # 增强版生成器配置
+    # 数值稳定版生成器配置
     generator_config = GeneratorConfig(
         encoder_config=encoder_config,
         decoder_config=decoder_config,
         masking_config=masking_config,
         
-        # 重新平衡的损失权重
-        alpha_bias=0.5,
-        alpha_degree=0.5, 
-        alpha_logits=2.0,      # 连接预测最重要
-        alpha_weights=0.5,
-        beta_kl=1.0,
+        # 重新平衡的损失权重（优化梯度更新）
+        alpha_bias=0.2,        # 提高：0.05 → 0.2
+        alpha_degree=0.2,      # 提高：0.05 → 0.2
+        alpha_logits=0.5,      # 大幅提高：0.1 → 0.5（核心组件）
+        alpha_weights=0.1,     # 提高：0.01 → 0.1
+        beta_kl=0.01,          # 提高：0.001 → 0.01
         
-        # 推理参数
-        eta=0.1,
+        # 推理参数（保守设置）
+        eta=0.05,              # 降低：0.1 → 0.05
         sample_from_prior=True,
-        temperature=1.0,
+        temperature=0.5,       # 降低：1.0 → 0.5，减少随机性
         
-        # 多样性增强参数
-        use_dynamic_temperature=True,
-        temperature_range=(0.3, 3.0),
-        use_spherical_sampling=True,
-        noise_injection_strength=0.15,
-        use_dynamic_eta=True,
-        eta_range=(0.05, 0.4),
-        diversity_boost_factor=1.5,
-        use_constraint_diversity=True,
+        # 多样性增强参数（暂时简化）
+        use_dynamic_temperature=False,  # 关闭：True → False
+        temperature_range=(0.5, 1.0),   # 缩小范围：(0.3, 3.0) → (0.5, 1.0)
+        use_spherical_sampling=False,   # 关闭：True → False
+        noise_injection_strength=0.0,   # 关闭：0.15 → 0.0
+        use_dynamic_eta=False,          # 关闭：True → False
+        eta_range=(0.05, 0.1),          # 缩小范围：(0.05, 0.4) → (0.05, 0.1)
+        diversity_boost_factor=1.0,     # 降低：1.5 → 1.0
+        use_constraint_diversity=False, # 关闭：True → False
         
-        # 稀疏性正则化
-        use_sparsity_regularization=True,
-        sparsity_weight=0.05,
+        # 稀疏性正则化（关闭）
+        use_sparsity_regularization=False,  # 关闭：True → False
+        sparsity_weight=0.0,               # 关闭：0.05 → 0.0
         target_sparsity=0.1,
         
-        # 课程学习
-        use_curriculum_learning=True,
-        curriculum_kl_warmup_epochs=200,
-        curriculum_kl_annealing_epochs=600
+        # 课程学习（简化）
+        use_curriculum_learning=True,      # 保持开启，有助稳定性
+        curriculum_kl_warmup_epochs=50,    # 缩短：200 → 50
+        curriculum_kl_annealing_epochs=100 # 缩短：600 → 100
     )
     
-    # 增强版训练配置
+    # 数值稳定性优化训练配置
     if quick_test:
-        # 快速测试配置（加快验证速度）
-        num_epochs = 100
-        iterations_per_epoch = 50
-        quality_eval_freq = 50
-        print("🚀 使用快速测试配置 (100 epochs, 5K iterations)")
+        # 快速测试配置（数值稳定性优先）
+        num_epochs = 50  # 进一步减少，专注稳定性验证
+        iterations_per_epoch = 20
+        quality_eval_freq = 25
+        print("🚀 使用数值稳定测试配置 (50 epochs, 1K iterations)")
     else:
-        # 完整训练配置
-        num_epochs = 5000
-        iterations_per_epoch = 200
-        quality_eval_freq = 100
-        print("🎯 使用完整训练配置 (5000 epochs, 1M iterations)")
+        # 稳定训练配置（保守参数）
+        num_epochs = 500  # 大幅减少：5000 → 500，确保稳定性
+        iterations_per_epoch = 50  # 减少：200 → 50，降低累积误差
+        quality_eval_freq = 50
+        print("🎯 使用稳定训练配置 (500 epochs, 25K iterations)")
     
     training_config = TrainingConfig(
-        # 大幅提升训练强度
-        num_epochs=num_epochs,              # 可调节
-        iterations_per_epoch=iterations_per_epoch,     # 可调节
-        learning_rate=1e-4,           # 1e-3 → 1e-4 (更稳定)
-        weight_decay=1e-3,            # 提高权重衰减
+        # 数值稳定性优先的训练参数
+        num_epochs=num_epochs,              
+        iterations_per_epoch=iterations_per_epoch,     
+        learning_rate=1e-5,           # 优化提升：1e-6 → 1e-5 (合理范围)
+        weight_decay=1e-4,            # 适度提升：1e-5 → 1e-4
         
-        # 学习率调度增强
+        # 学习率调度（更保守）
         use_lr_scheduler=True,
         scheduler_type="cosine_with_warmup",
-        warmup_epochs=50,
+        warmup_epochs=20,  # 减少预热期
         
-        # 梯度裁剪（加强以应对梯度爆炸）
-        grad_clip_norm=0.1,  # 大幅降低裁剪阈值
+        # 平衡的梯度裁剪（允许适度梯度）
+        grad_clip_norm=0.5,   # 放宽：0.01 → 0.5，允许更多有效梯度
         
-        # 早停策略（更宽松）
+        # 早停策略（数值稳定性优先）
         use_early_stopping=True,
-        early_stopping_patience=500,  # 200 → 500
-        early_stopping_min_delta=1e-6,  # 更敏感
+        early_stopping_patience=50,  # 大幅减少：500 → 50，快速识别问题
+        early_stopping_min_delta=1e-4,  # 降低敏感度：1e-6 → 1e-4
         
-        # 验证和保存
-        validation_frequency=50,      # 增加验证间隔
-        save_frequency=500,           # 增加保存间隔
+        # 验证和保存（更频繁监控）
+        validation_frequency=10,      # 增加验证频率：50 → 10
+        save_frequency=25,            # 增加保存频率：500 → 25
         
-        # KL退火增强
+        # KL退火（保守策略）
         kl_annealing=True,
-        kl_annealing_epochs=800,      # 200 → 800 (4倍延长)
+        kl_annealing_epochs=100,      # 大幅减少：800 → 100，快速稳定
         
-        # 数据增强
-        use_data_augmentation=True,
-        feature_noise_std=0.05,
-        edge_perturbation_prob=0.1,
+        # 数据增强（暂时关闭，减少复杂性）
+        use_data_augmentation=False,  # True → False，专注稳定性
+        feature_noise_std=0.01,       # 降低噪声：0.05 → 0.01
+        edge_perturbation_prob=0.0,   # 关闭边扰动：0.1 → 0.0
         
-        # RTX 3060 Ti专项优化
-        use_mixed_precision=True,         # 启用AMP混合精度训练
+        # RTX 3060 Ti保守优化
+        use_mixed_precision=True,         # 保持AMP
         amp_loss_scale="dynamic",        # 动态损失缩放
-        use_compile=False,               # PyTorch 2.0编译（可选）
+        use_compile=False,               # 关闭编译优化
         
-        # 微批次累积（提高GPU利用率）
-        micro_batch_size=4,
-        gradient_accumulation_steps=4,   # 4倍梯度累积
+        # 微批次累积（减少累积步数）
+        micro_batch_size=2,              # 减少：4 → 2
+        gradient_accumulation_steps=2,   # 减少：4 → 2，降低累积误差
         
-        # 优化器增强
-        optimizer_type="adamw",       # Adam → AdamW
+        # 优化器（保守设置）
+        optimizer_type="adamw",       # 保持AdamW
         
-        # 稀疏性正则化
-        use_sparsity_regularization=True,
-        sparsity_weight=0.05,
+        # 稀疏性正则化（降低权重）
+        use_sparsity_regularization=False,  # 暂时关闭：True → False
+        sparsity_weight=0.01,              # 降低权重：0.05 → 0.01
         target_sparsity=0.1,
         
-        # 在线质量评估配置（优化频率避免阻塞）
-        enable_quality_evaluation=True,
-        quality_evaluation_frequency=quality_eval_freq,  # 动态调整频率
-        quality_samples_per_eval=2,        # 每次评估2个样本（减少样本数）
-        enable_detailed_quality_logging=False  # 关闭详细日志减少I/O
+        # 在线质量评估配置（最小化影响）
+        enable_quality_evaluation=False,   # 暂时关闭：True → False
+        quality_evaluation_frequency=100,  # 降低频率
+        quality_samples_per_eval=1,        # 减少样本：2 → 1
+        enable_detailed_quality_logging=False  # 保持关闭
     )
     
-    # 推理配置
+    # 推理配置（与测试版本保持一致）
     inference_config = InferenceConfig(
-        num_test_instances=5,         # 生成样本数
         eta=0.1,
+        num_test_instances=3,         # 与测试版本一致：生成3个测试实例
         temperature=1.0,
         sample_from_prior=True,
         constraint_selection_strategy="random",
         diversity_boost=True,
-        num_diverse_samples=5
+        num_diverse_samples=5,        # 与测试版本一致：5个多样性样本
+        compute_similarity_metrics=True,
+        generate_comparison_report=True,
+        experiment_name=f"enhanced_inference_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     )
     
     # 评估配置
@@ -255,36 +258,357 @@ def create_enhanced_configs(quick_test: bool = False) -> Dict[str, Any]:
     }
 
 
+def _convert_demo3_to_demo4_format(bipartite_graph, logger):
+    """将Demo 3的BipartiteGraph转换为Demo 4格式"""
+    try:
+        import torch
+        import numpy as np
+        from torch_geometric.data import HeteroData
+        
+        # 获取设备
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        
+        # 提取基本信息
+        constraint_nodes = bipartite_graph.constraint_nodes
+        variable_nodes = bipartite_graph.variable_nodes
+        edges = bipartite_graph.edges
+        
+        logger.info(f"原始数据统计:")
+        logger.info(f"  - 约束节点: {len(constraint_nodes)}")
+        logger.info(f"  - 变量节点: {len(variable_nodes)}")
+        logger.info(f"  - 边连接: {len(edges)}")
+        
+        # 创建约束节点特征 (16维)
+        num_constraints = len(constraint_nodes)
+        constraint_features = np.zeros((num_constraints, 16), dtype=np.float32)
+        
+        for i, node in enumerate(constraint_nodes):
+            if hasattr(node, 'features') and node.features is not None:
+                node_features = np.array(node.features, dtype=np.float32)
+                if len(node_features) >= 16:
+                    constraint_features[i] = node_features[:16]
+                else:
+                    constraint_features[i, :len(node_features)] = node_features
+            else:
+                # 基本特征构建
+                feature_idx = 0
+                # 约束类型特征 (0-2)
+                if hasattr(node, 'constraint_type'):
+                    if str(node.constraint_type).lower() == 'equality':
+                        constraint_features[i, 0] = 1.0
+                    else:
+                        constraint_features[i, 1] = 1.0
+                feature_idx = 3
+                
+                # 右端项值 (3)
+                if hasattr(node, 'rhs') and node.rhs is not None:
+                    constraint_features[i, 3] = float(node.rhs)
+                
+                # 约束度数 (4)
+                if hasattr(node, 'degree'):
+                    constraint_features[i, 4] = float(node.degree)
+                
+                # 填充剩余特征为小的随机值
+                constraint_features[i, 5:] = np.random.normal(0, 0.01, 11)
+        
+        # 创建变量节点特征 (9维)
+        num_variables = len(variable_nodes)
+        variable_features = np.zeros((num_variables, 9), dtype=np.float32)
+        
+        for i, node in enumerate(variable_nodes):
+            if hasattr(node, 'features') and node.features is not None:
+                node_features = np.array(node.features, dtype=np.float32)
+                if len(node_features) >= 9:
+                    variable_features[i] = node_features[:9]
+                else:
+                    variable_features[i, :len(node_features)] = node_features
+            else:
+                # 基本特征构建
+                # 变量类型 (0-2)
+                if hasattr(node, 'variable_type'):
+                    if str(node.variable_type).lower() == 'continuous':
+                        variable_features[i, 0] = 1.0
+                    elif str(node.variable_type).lower() == 'binary':
+                        variable_features[i, 2] = 1.0
+                    else:
+                        variable_features[i, 1] = 1.0
+                
+                # 目标函数系数 (3)
+                if hasattr(node, 'objective_coeff'):
+                    variable_features[i, 3] = float(node.objective_coeff)
+                
+                # 变量边界 (4-5)
+                if hasattr(node, 'lower_bound'):
+                    variable_features[i, 4] = float(node.lower_bound) if node.lower_bound is not None else -1e6
+                if hasattr(node, 'upper_bound'):
+                    variable_features[i, 5] = float(node.upper_bound) if node.upper_bound is not None else 1e6
+                
+                # 变量度数 (6)
+                if hasattr(node, 'degree'):
+                    variable_features[i, 6] = float(node.degree)
+                
+                # 填充剩余特征
+                variable_features[i, 7:] = np.random.normal(0, 0.01, 2)
+        
+        # 处理边连接和特征
+        num_edges = len(edges)
+        edge_indices = np.zeros((2, num_edges), dtype=np.int64)
+        edge_features = np.zeros((num_edges, 8), dtype=np.float32)
+        
+        for i, edge in enumerate(edges):
+            # 边连接
+            if hasattr(edge, 'constraint_idx') and hasattr(edge, 'variable_idx'):
+                edge_indices[0, i] = edge.constraint_idx
+                edge_indices[1, i] = edge.variable_idx
+            elif hasattr(edge, 'source') and hasattr(edge, 'target'):
+                edge_indices[0, i] = edge.source
+                edge_indices[1, i] = edge.target
+            elif isinstance(edge, (tuple, list)) and len(edge) >= 2:
+                edge_indices[0, i] = edge[0]
+                edge_indices[1, i] = edge[1]
+            
+            # 边特征
+            if hasattr(edge, 'features') and edge.features is not None:
+                edge_feat = np.array(edge.features, dtype=np.float32)
+                if len(edge_feat) >= 8:
+                    edge_features[i] = edge_feat[:8]
+                else:
+                    edge_features[i, :len(edge_feat)] = edge_feat
+            else:
+                # 基本边特征
+                if hasattr(edge, 'coefficient'):
+                    edge_features[i, 0] = float(edge.coefficient)
+                elif hasattr(edge, 'weight'):
+                    edge_features[i, 0] = float(edge.weight)
+                
+                # 填充剩余特征
+                edge_features[i, 1:] = np.random.normal(0, 0.01, 7)
+        
+        # 特征归一化和数值稳定性处理
+        logger.info("执行特征归一化和数值稳定性处理...")
+        
+        # 约束特征归一化
+        constraint_features = np.nan_to_num(constraint_features, nan=0.0, posinf=1.0, neginf=-1.0)
+        constraint_std = np.std(constraint_features, axis=0) + 1e-8
+        constraint_features = constraint_features / constraint_std
+        constraint_features = np.clip(constraint_features, -5.0, 5.0)  # 防止极端值
+        
+        # 变量特征归一化  
+        variable_features = np.nan_to_num(variable_features, nan=0.0, posinf=1.0, neginf=-1.0)
+        variable_std = np.std(variable_features, axis=0) + 1e-8
+        variable_features = variable_features / variable_std
+        variable_features = np.clip(variable_features, -5.0, 5.0)
+        
+        # 边特征归一化
+        edge_features = np.nan_to_num(edge_features, nan=0.0, posinf=1.0, neginf=-1.0)
+        edge_std = np.std(edge_features, axis=0) + 1e-8
+        edge_features = edge_features / edge_std
+        edge_features = np.clip(edge_features, -5.0, 5.0)
+        
+        logger.info(f"特征归一化完成:")
+        logger.info(f"  - 约束特征范围: [{constraint_features.min():.3f}, {constraint_features.max():.3f}]")
+        logger.info(f"  - 变量特征范围: [{variable_features.min():.3f}, {variable_features.max():.3f}]") 
+        logger.info(f"  - 边特征范围: [{edge_features.min():.3f}, {edge_features.max():.3f}]")
+        
+        # 创建PyTorch Geometric异构图
+        data = HeteroData()
+        
+        # 节点特征 (不设置requires_grad，让模型自己处理)
+        data['constraint'].x = torch.tensor(
+            constraint_features, 
+            dtype=torch.float32, 
+            device=device
+        )
+        
+        data['variable'].x = torch.tensor(
+            variable_features, 
+            dtype=torch.float32, 
+            device=device
+        )
+        
+        # 边连接和特征
+        data['constraint', 'connects', 'variable'].edge_index = torch.tensor(
+            edge_indices, 
+            dtype=torch.long, 
+            device=device
+        )
+        
+        data['constraint', 'connects', 'variable'].edge_attr = torch.tensor(
+            edge_features, 
+            dtype=torch.float32, 
+            device=device
+        )
+        
+        # 添加反向边连接（G2MILP模型需要）
+        reverse_edge_indices = torch.stack([
+            torch.tensor(edge_indices[1], dtype=torch.long, device=device),
+            torch.tensor(edge_indices[0], dtype=torch.long, device=device)
+        ], dim=0)
+        
+        data['variable', 'connected_by', 'constraint'].edge_index = reverse_edge_indices
+        data['variable', 'connected_by', 'constraint'].edge_attr = torch.tensor(
+            edge_features, 
+            dtype=torch.float32, 
+            device=device
+        )
+        
+        logger.info("✅ Demo 3格式转换完成")
+        logger.info(f"  - 约束节点特征: {data['constraint'].x.size()}")
+        logger.info(f"  - 变量节点特征: {data['variable'].x.size()}")
+        logger.info(f"  - 前向边: {data['constraint', 'connects', 'variable'].edge_index.size(1)}")
+        logger.info(f"  - 反向边: {data['variable', 'connected_by', 'constraint'].edge_index.size(1)}")
+        logger.info(f"  - 设备: {device}")
+        
+        # 返回结果
+        return {
+            'bipartite_data': data,
+            'metadata': {
+                'source': 'demo3_bipartite_graph',
+                'conversion_timestamp': datetime.now().isoformat(),
+                'num_constraints': num_constraints,
+                'num_variables': num_variables,
+                'num_edges': num_edges,
+                'device': str(device),
+            },
+            'extraction_summary': {
+                'conversion_method': 'demo3_to_demo4_inline',
+                'requires_grad': False,  # 修正：让模型自己处理梯度
+                'bidirectional_edges': True,
+                'timestamp': datetime.now().isoformat()
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"转换过程中出错: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return None
+
+
+def _validate_hetero_data_structure(hetero_data, logger) -> bool:
+    """验证HeteroData数据结构的完整性"""
+    try:
+        # 🔍 检查必需的节点类型
+        required_node_types = ['constraint', 'variable']
+        for node_type in required_node_types:
+            if node_type not in hetero_data:
+                logger.error(f"❌ 缺少必需的节点类型: {node_type}")
+                return False
+            
+            if 'x' not in hetero_data[node_type]:
+                logger.error(f"❌ 节点类型 {node_type} 缺少特征矩阵 'x'")
+                return False
+            
+            # 检查特征矩阵的形状
+            features = hetero_data[node_type].x
+            if features.dim() != 2:
+                logger.error(f"❌ 节点 {node_type} 特征矩阵维度错误: {features.dim()}")
+                return False
+            
+            logger.info(f"✅ 节点 {node_type}: {features.shape}")
+        
+        # 🔍 检查必需的边类型
+        required_edge_types = [
+            ('constraint', 'connects', 'variable'),
+            ('variable', 'connected_by', 'constraint')
+        ]
+        
+        for edge_type in required_edge_types:
+            if edge_type not in hetero_data.edge_index_dict:
+                logger.error(f"❌ 缺少必需的边类型: {edge_type}")
+                return False
+            
+            edge_index = hetero_data[edge_type].edge_index
+            if edge_index.dim() != 2 or edge_index.size(0) != 2:
+                logger.error(f"❌ 边 {edge_type} 索引形状错误: {edge_index.shape}")
+                return False
+            
+            logger.info(f"✅ 边 {edge_type}: {edge_index.size(1)} 条边")
+        
+        # 🔍 检查特征维度是否符合G2MILP标准
+        constraint_dim = hetero_data['constraint'].x.size(1)
+        variable_dim = hetero_data['variable'].x.size(1)
+        
+        if constraint_dim != 16:
+            logger.warning(f"⚠️ 约束特征维度非标准: {constraint_dim} (期望16)")
+        if variable_dim != 9:
+            logger.warning(f"⚠️ 变量特征维度非标准: {variable_dim} (期望9)")
+        
+        # 🔍 检查数值有效性
+        for node_type in ['constraint', 'variable']:
+            features = hetero_data[node_type].x
+            if torch.isnan(features).any():
+                logger.error(f"❌ 节点 {node_type} 特征包含NaN值")
+                return False
+            if torch.isinf(features).any():
+                logger.error(f"❌ 节点 {node_type} 特征包含Inf值")
+                return False
+        
+        logger.info("✅ HeteroData结构验证完成")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ 数据结构验证过程中出错: {e}")
+        return False
+
+
 def load_bipartite_data(data_path: str) -> Optional[Dict[str, Any]]:
-    """加载Demo 3生成的二分图数据（增强版）"""
+    """加载Demo 3生成的二分图数据（增强版 - 带详细验证）"""
     try:
         logger = logging.getLogger("Demo4Enhanced")
         
-        # 检查数据文件
+        # 🔍 步骤1: 文件系统验证
+        logger.info("🔍 开始数据加载验证流程...")
         bipartite_file = Path(data_path)
+        
         if not bipartite_file.exists():
-            logger.error(f"二分图数据文件不存在: {bipartite_file}")
-            logger.info("请先运行Demo 3生成二分图数据")
+            logger.error(f"❌ 二分图数据文件不存在: {bipartite_file}")
+            logger.info("💡 请先运行Demo 3生成二分图数据")
             return None
         
-        # 加载数据
-        logger.info(f"加载二分图数据: {bipartite_file}")
-        with open(bipartite_file, 'rb') as f:
-            bipartite_graph = pickle.load(f)
+        # 检查文件大小
+        file_size = bipartite_file.stat().st_size
+        logger.info(f"✅ 文件存在检查通过")
+        logger.info(f"📁 文件路径: {bipartite_file}")
+        logger.info(f"📊 文件大小: {file_size / (1024*1024):.2f} MB")
         
-        # 处理不同格式的数据
+        if file_size == 0:
+            logger.error(f"❌ 数据文件为空")
+            return None
+        elif file_size < 1024:  # 小于1KB可能有问题
+            logger.warning(f"⚠️ 数据文件过小 ({file_size} bytes)，可能不完整")
+        
+        # 🔍 步骤2: 数据加载验证
+        logger.info("🔄 开始加载数据文件...")
+        try:
+            with open(bipartite_file, 'rb') as f:
+                bipartite_graph = pickle.load(f)
+            logger.info("✅ 数据文件加载成功")
+        except pickle.UnpicklingError as e:
+            logger.error(f"❌ 数据文件格式错误: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"❌ 数据文件读取失败: {e}")
+            return None
+        
+        # 🔍 步骤3: 数据类型验证
+        logger.info(f"📋 数据类型: {type(bipartite_graph)}")
+        
+        if bipartite_graph is None:
+            logger.error("❌ 加载的数据为None")
+            return None
+        
+        # 🔍 步骤4: 数据结构验证
         if isinstance(bipartite_graph, dict) and 'bipartite_data' in bipartite_graph:
             # 直接是期望的字典格式（测试数据）
-            logger.info(f"加载预包装的二分图数据")
+            logger.info("📦 检测到预包装的二分图数据格式")
             bipartite_data = bipartite_graph['bipartite_data']
-            logger.info(f"  - 约束节点: {bipartite_data['constraint'].x.size(0)}")
-            logger.info(f"  - 变量节点: {bipartite_data['variable'].x.size(0)}")
             
-            edge_counts = {}
-            for edge_type, edge_index in bipartite_data.edge_index_dict.items():
-                edge_counts[str(edge_type)] = edge_index.size(1)
-            logger.info(f"  - 边统计: {edge_counts}")
-            
+            # 详细验证数据完整性
+            if not _validate_hetero_data_structure(bipartite_data, logger):
+                return None
+                
+            logger.info("✅ 预包装数据验证通过")
             return bipartite_graph
             
         elif hasattr(bipartite_graph, 'to_pytorch_geometric'):
@@ -313,8 +637,33 @@ def load_bipartite_data(data_path: str) -> Optional[Dict[str, Any]]:
                     'timestamp': datetime.now().isoformat()
                 }
             }
+        elif hasattr(bipartite_graph, 'variable_nodes') and hasattr(bipartite_graph, 'constraint_nodes'):
+            # Demo 3的BipartiteGraph对象 - 需要转换
+            logger.info(f"检测到Demo 3的BipartiteGraph格式，进行转换...")
+            
+            # 直接在这里进行转换，不依赖外部转换器
+            converted_data = _convert_demo3_to_demo4_format(bipartite_graph, logger)
+            
+            if converted_data is None:
+                logger.error("Demo 3格式转换失败")
+                return None
+            
+            logger.info(f"Demo 3格式转换成功:")
+            bipartite_data = converted_data['bipartite_data']
+            logger.info(f"  - 约束节点: {bipartite_data['constraint'].x.size(0)}")
+            logger.info(f"  - 变量节点: {bipartite_data['variable'].x.size(0)}")
+            
+            # 计算边数
+            edge_count = 0
+            for edge_type in bipartite_data.edge_types:
+                if hasattr(bipartite_data[edge_type], 'edge_index'):
+                    edge_count += bipartite_data[edge_type].edge_index.size(1)
+            logger.info(f"  - 边数: {edge_count}")
+            
+            return converted_data
         else:
             logger.error(f"不支持的数据格式: {type(bipartite_graph)}")
+            logger.error(f"对象属性: {dir(bipartite_graph)[:10]}...")
             return None
         
     except Exception as e:
@@ -444,18 +793,296 @@ def enhanced_training(generator: G2MILPGenerator,
         raise
 
 
+def _validate_inference_inputs(generator, training_data: Dict[str, Any], configs: Dict[str, Any], logger) -> bool:
+    """验证推理输入参数"""
+    try:
+        # 检查生成器
+        if generator is None:
+            logger.error("❌ 生成器为None")
+            return False
+        
+        if not hasattr(generator, 'eval'):
+            logger.error("❌ 生成器不是有效的PyTorch模型")
+            return False
+        
+        # 检查训练数据
+        if not isinstance(training_data, dict):
+            logger.error("❌ training_data必须是字典")
+            return False
+        
+        if 'bipartite_data' not in training_data:
+            logger.error("❌ training_data缺少bipartite_data")
+            return False
+        
+        # 检查配置
+        if not isinstance(configs, dict):
+            logger.error("❌ configs必须是字典")
+            return False
+        
+        if 'inference' not in configs:
+            logger.error("❌ configs缺少inference配置")
+            return False
+        
+        inference_config = configs['inference']
+        required_attrs = ['eta', 'num_test_instances', 'temperature']
+        for attr in required_attrs:
+            if not hasattr(inference_config, attr):
+                logger.error(f"❌ 推理配置缺少必需属性: {attr}")
+                return False
+        
+        logger.info("✅ 推理输入参数验证通过")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ 推理输入验证过程中出错: {e}")
+        return False
+
+
+def _validate_model_state(generator, logger) -> bool:
+    """验证模型状态"""
+    try:
+        # 检查模型是否在评估模式
+        if generator.training:
+            logger.warning("⚠️ 模型不在评估模式，切换到eval模式")
+            generator.eval()
+        
+        # 检查模型参数
+        total_params = sum(p.numel() for p in generator.parameters())
+        trainable_params = sum(p.numel() for p in generator.parameters() if p.requires_grad)
+        
+        logger.info(f"📊 模型参数统计:")
+        logger.info(f"  - 总参数数: {total_params:,}")
+        logger.info(f"  - 可训练参数: {trainable_params:,}")
+        
+        if total_params == 0:
+            logger.error("❌ 模型没有参数")
+            return False
+        
+        # 检查参数是否有异常值
+        nan_params = 0
+        inf_params = 0
+        for param in generator.parameters():
+            if torch.isnan(param).any():
+                nan_params += 1
+            if torch.isinf(param).any():
+                inf_params += 1
+        
+        if nan_params > 0:
+            logger.error(f"❌ 模型包含{nan_params}个NaN参数")
+            return False
+        
+        if inf_params > 0:
+            logger.error(f"❌ 模型包含{inf_params}个Inf参数") 
+            return False
+        
+        # 检查设备一致性
+        device_list = [param.device for param in generator.parameters()]
+        if len(set(str(d) for d in device_list)) > 1:
+            logger.warning("⚠️ 模型参数分布在不同设备上")
+        
+        first_device = device_list[0] if device_list else 'cpu'
+        logger.info(f"🖥️ 模型设备: {first_device}")
+        
+        logger.info("✅ 模型状态验证通过")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ 模型状态验证过程中出错: {e}")
+        return False
+
+
+def _validate_inference_results(inference_results: Dict[str, Any], logger) -> bool:
+    """验证推理结果的有效性"""
+    try:
+        # 检查结果结构
+        required_keys = ['generated_instances', 'generation_info']
+        for key in required_keys:
+            if key not in inference_results:
+                logger.error(f"❌ 推理结果缺少必需键: {key}")
+                return False
+        
+        generated_instances = inference_results['generated_instances']
+        generation_info = inference_results['generation_info']
+        
+        # 检查生成实例
+        if not isinstance(generated_instances, list):
+            logger.error("❌ generated_instances必须是列表")
+            return False
+        
+        if len(generated_instances) == 0:
+            logger.error("❌ 没有生成任何实例")
+            return False
+        
+        # 检查每个生成实例
+        for i, instance in enumerate(generated_instances):
+            if instance is None:
+                logger.error(f"❌ 生成实例{i}为None")
+                return False
+            
+            # 验证HeteroData结构
+            if not _validate_hetero_data_structure(instance, logger):
+                logger.error(f"❌ 生成实例{i}结构验证失败")
+                return False
+        
+        # 检查生成信息
+        if not isinstance(generation_info, list):
+            logger.error("❌ generation_info必须是列表")
+            return False
+        
+        if len(generation_info) != len(generated_instances):
+            logger.warning(f"⚠️ 生成信息数量({len(generation_info)})与实例数量({len(generated_instances)})不匹配")
+        
+        logger.info("✅ 推理结果验证通过")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ 推理结果验证过程中出错: {e}")
+        return False
+
+
+def _perform_real_time_quality_check(generated_samples: List, generation_info: List, 
+                                   original_data, logger) -> Dict[str, Any]:
+    """执行实时质量检查"""
+    try:
+        quality_summary = {
+            'total_samples': len(generated_samples),
+            'valid_samples': 0,
+            'invalid_samples': 0,
+            'quality_scores': [],
+            'structural_similarity': [],
+            'size_comparison': {},
+            'anomaly_flags': []
+        }
+        
+        logger.info(f"🔍 开始检查{len(generated_samples)}个生成样本...")
+        
+        # 获取原始数据统计
+        orig_constraints = original_data['constraint'].x.size(0)
+        orig_variables = original_data['variable'].x.size(0)
+        orig_edges = original_data['constraint', 'connects', 'variable'].edge_index.size(1)
+        
+        logger.info(f"📊 原始数据规模: {orig_constraints}约束, {orig_variables}变量, {orig_edges}边")
+        
+        for i, sample in enumerate(generated_samples):
+            try:
+                # 基本结构检查
+                gen_constraints = sample['constraint'].x.size(0)
+                gen_variables = sample['variable'].x.size(0)
+                gen_edges = sample['constraint', 'connects', 'variable'].edge_index.size(1)
+                
+                # 规模比较
+                size_ratio = {
+                    'constraint_ratio': gen_constraints / orig_constraints,
+                    'variable_ratio': gen_variables / orig_variables,
+                    'edge_ratio': gen_edges / orig_edges
+                }
+                
+                # 数值健全性检查
+                anomalies = []
+                
+                # 检查NaN/Inf
+                for node_type in ['constraint', 'variable']:
+                    features = sample[node_type].x
+                    if torch.isnan(features).any():
+                        anomalies.append(f"{node_type}_nan")
+                    if torch.isinf(features).any():
+                        anomalies.append(f"{node_type}_inf")
+                
+                # 检查边连接有效性
+                edge_index = sample['constraint', 'connects', 'variable'].edge_index
+                max_constraint_idx = edge_index[0].max().item() if edge_index.size(1) > 0 else -1
+                max_variable_idx = edge_index[1].max().item() if edge_index.size(1) > 0 else -1
+                
+                if max_constraint_idx >= gen_constraints:
+                    anomalies.append("invalid_constraint_index")
+                if max_variable_idx >= gen_variables:
+                    anomalies.append("invalid_variable_index")
+                
+                # 计算简单质量得分
+                if len(anomalies) == 0:
+                    # 基于规模相似度的简单质量得分
+                    size_similarity = 1.0 - abs(size_ratio['constraint_ratio'] - 1.0) * 0.5
+                    size_similarity -= abs(size_ratio['variable_ratio'] - 1.0) * 0.3  
+                    size_similarity -= abs(size_ratio['edge_ratio'] - 1.0) * 0.2
+                    quality_score = max(0.0, size_similarity)
+                    
+                    quality_summary['valid_samples'] += 1
+                else:
+                    quality_score = 0.0
+                    quality_summary['invalid_samples'] += 1
+                
+                quality_summary['quality_scores'].append(quality_score)
+                quality_summary['structural_similarity'].append(size_ratio)
+                quality_summary['anomaly_flags'].append(anomalies)
+                
+                # 详细记录
+                status = "✅" if len(anomalies) == 0 else "❌"
+                logger.info(f"  样本{i+1} {status}: 质量={quality_score:.3f}, "
+                          f"规模=({gen_constraints},{gen_variables},{gen_edges}), "
+                          f"异常={len(anomalies)}")
+                
+            except Exception as e:
+                logger.error(f"❌ 样本{i+1}质量检查失败: {e}")
+                quality_summary['invalid_samples'] += 1
+                quality_summary['quality_scores'].append(0.0)
+                quality_summary['anomaly_flags'].append(['check_failed'])
+        
+        # 汇总统计
+        avg_quality = sum(quality_summary['quality_scores']) / len(quality_summary['quality_scores']) if quality_summary['quality_scores'] else 0.0
+        quality_summary['average_quality'] = avg_quality
+        quality_summary['success_rate'] = quality_summary['valid_samples'] / quality_summary['total_samples']
+        
+        logger.info(f"📊 实时质量检查总结:")
+        logger.info(f"  - 有效样本: {quality_summary['valid_samples']}/{quality_summary['total_samples']}")
+        logger.info(f"  - 成功率: {quality_summary['success_rate']:.1%}")
+        logger.info(f"  - 平均质量: {avg_quality:.4f}")
+        
+        return quality_summary
+        
+    except Exception as e:
+        logger.error(f"❌ 实时质量检查过程中出错: {e}")
+        return {'error': str(e), 'total_samples': len(generated_samples)}
+
+
 def enhanced_inference(generator: G2MILPGenerator,
                       training_data: Dict[str, Any],
                       configs: Dict[str, Any]) -> Dict[str, Any]:
-    """增强版推理生成"""
+    """增强版推理生成（带详细中间步骤验证）"""
     logger = logging.getLogger("Demo4Enhanced")
     
-    logger.info("开始增强版推理生成...")
+    logger.info("🚀 开始增强版推理生成...")
     
-    # 创建推理器
-    inference_engine = G2MILPInference(generator, configs['inference'])
+    # 🔍 步骤1: 输入参数验证
+    logger.info("🔍 推理输入参数验证...")
+    if not _validate_inference_inputs(generator, training_data, configs, logger):
+        raise ValueError("推理输入参数验证失败")
     
-    # 执行推理
+    # 🔍 步骤2: 模型状态验证  
+    logger.info("🔍 模型状态验证...")
+    if not _validate_model_state(generator, logger):
+        raise ValueError("模型状态验证失败")
+    
+    # 🔍 步骤3: 创建推理器
+    logger.info("🔧 创建推理引擎...")
+    try:
+        inference_engine = G2MILPInference(generator, configs['inference'])
+        logger.info("✅ 推理引擎创建成功")
+    except Exception as e:
+        logger.error(f"❌ 推理引擎创建失败: {e}")
+        raise
+    
+    # 🔍 步骤4: 推理配置验证
+    logger.info("🔍 推理配置验证...")
+    inference_config = configs['inference']
+    logger.info(f"📋 推理配置详情:")
+    logger.info(f"  - η (遮盖比例): {inference_config.eta}")
+    logger.info(f"  - 测试实例数: {inference_config.num_test_instances}")
+    logger.info(f"  - 采样温度: {inference_config.temperature}")
+    logger.info(f"  - 多样性样本数: {inference_config.num_diverse_samples}")
+    logger.info(f"  - 先验采样: {inference_config.sample_from_prior}")
+    
+    # 🔍 步骤5: 执行推理
+    logger.info("⚡ 开始执行推理生成...")
     start_time = time.time()
     
     try:
@@ -466,15 +1093,30 @@ def enhanced_inference(generator: G2MILPGenerator,
         
         inference_time = time.time() - start_time
         
+        # 🔍 步骤6: 推理结果验证
+        logger.info("🔍 推理结果验证...")
+        if not _validate_inference_results(inference_results, logger):
+            raise ValueError("推理结果验证失败")
+        
         # 分析生成结果
         generated_samples = inference_results['generated_instances']
         generation_info = inference_results['generation_info']
         
-        logger.info("增强版推理生成完成:")
+        logger.info("🎉 增强版推理生成完成:")
         logger.info(f"  - 推理时间: {inference_time:.2f} 秒")
         logger.info(f"  - 生成样本数: {len(generated_samples)}")
         
+        # 🔍 步骤7: 实时质量检查
+        logger.info("🔍 执行实时质量检查...")
+        quality_summary = _perform_real_time_quality_check(
+            generated_samples, generation_info, training_data['bipartite_data'], logger
+        )
+        
+        # 将质量检查结果添加到推理结果中
+        inference_results['real_time_quality'] = quality_summary
+        
         # 分析多样性统计
+        logger.info("📊 多样性统计分析:")
         for i, info in enumerate(generation_info):
             if 'diversity_stats' in info:
                 stats = info['diversity_stats']
@@ -484,6 +1126,7 @@ def enhanced_inference(generator: G2MILPGenerator,
                 logger.info(f"    连接标准差: {stats.get('connection_std', 0):.4f}")
                 logger.info(f"    约束多样性: {stats.get('unique_constraints_ratio', 0):.4f}")
         
+        logger.info("✅ 增强版推理流程全部完成")
         return inference_results
         
     except Exception as e:
@@ -742,7 +1385,7 @@ def main():
         
         # 2. 加载Demo 3的二分图数据
         logger.info("步骤 2: 加载Demo 3二分图数据...")
-        bipartite_data_path = "test_bipartite_data.pkl"  # 暂时使用测试数据
+        bipartite_data_path = "output/demo3_g2milp/bipartite_graphs/demo3_bipartite_graph.pkl"  # 使用Demo3正式生成的二分图数据
         training_data = load_bipartite_data(bipartite_data_path)
         
         if training_data is None:

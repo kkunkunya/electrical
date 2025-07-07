@@ -31,6 +31,7 @@ from concurrent.futures import ThreadPoolExecutor, Future
 from .generator import G2MILPGenerator, GeneratorConfig
 from .evaluation import G2MILPEvaluator, EvaluationConfig
 from .inference import G2MILPInference, InferenceConfig
+from .early_stopping import EarlyStoppingMonitor, EarlyStoppingConfig, create_early_stopping_monitor
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,14 @@ class TrainingConfig:
     early_stopping_patience: int = 500   # 超大patience，适合长期训练
     early_stopping_min_delta: float = 1e-6  # 更敏感的min_delta
     min_delta: float = 1e-6              # 兼容别名
+    
+    # 高级Early Stopping配置
+    early_stopping_strategy: str = "combined"  # simple, multi_metric, adaptive, trend_analysis, combined
+    early_stopping_monitor_metrics: List[str] = None  # 额外监控指标
+    early_stopping_quality_threshold: float = 0.7     # 质量阈值
+    early_stopping_adaptive_patience: bool = True     # 自适应patience
+    early_stopping_trend_analysis: bool = True        # 趋势分析
+    early_stopping_verbose: bool = True               # 详细日志
     
     # 损失权重调度（课程学习增强）
     kl_annealing: bool = True
@@ -200,7 +209,29 @@ class G2MILPTrainer:
             'similarity_scores': []
         }
         
-        # 早停
+        # 高级Early Stopping监控器
+        if self.config.use_early_stopping:
+            early_stopping_config = EarlyStoppingConfig(
+                strategy=getattr(self.config, 'early_stopping_strategy', 'combined'),
+                patience=self.config.early_stopping_patience,
+                min_delta=self.config.early_stopping_min_delta,
+                monitor_metric='val_loss',
+                additional_metrics=getattr(self.config, 'early_stopping_monitor_metrics', 
+                                         ['train_loss', 'kl_weight', 'grad_norm', 'generation_quality']),
+                adaptive_patience=getattr(self.config, 'early_stopping_adaptive_patience', True),
+                trend_window=20,
+                enable_quality_monitoring=getattr(self.config, 'enable_quality_evaluation', True),
+                quality_threshold=getattr(self.config, 'early_stopping_quality_threshold', 0.7),
+                verbose=getattr(self.config, 'early_stopping_verbose', True),
+                save_best_model=True,
+                restore_best_weights=True
+            )
+            self.early_stopping_monitor = EarlyStoppingMonitor(early_stopping_config)
+            logger.info(f"✅ 高级Early Stopping监控器已启用 (策略: {early_stopping_config.strategy.value})")
+        else:
+            self.early_stopping_monitor = None
+        
+        # 传统早停（兼容性保留）
         self.early_stopping_counter = 0
         self.should_stop = False
         
@@ -469,19 +500,52 @@ class G2MILPTrainer:
             if accumulation_steps > 1:
                 total_loss = total_loss / accumulation_steps
             
+            # 数值稳定性检查：确保损失是有限的
+            if not torch.isfinite(total_loss):
+                logger.warning(f"迭代 {iteration}: 检测到非有限损失 {total_loss.item()}，跳过该迭代")
+                continue
+            
             if self.use_amp:
                 # AMP反向传播
                 self.scaler.scale(total_loss).backward()
                 
                 # 只在累积周期结束时进行优化器更新
                 if (iteration + 1) % accumulation_steps == 0:
+                    # 智能梯度有效性检查（允许少量NaN）
+                    grad_stats = self._analyze_gradient_health()
+                    
+                    # 如果NaN梯度比例过高（>20%），跳过更新
+                    if grad_stats['nan_ratio'] > 0.2:
+                        logger.warning(f"迭代 {iteration}: NaN梯度比例过高 {grad_stats['nan_ratio']:.3f}，跳过更新")
+                        self.optimizer.zero_grad()
+                        continue
+                    
+                    # 如果有少量NaN梯度（≤20%），进行零值替换
+                    if grad_stats['nan_ratio'] > 0.0:
+                        logger.debug(f"迭代 {iteration}: 检测到 {grad_stats['nan_ratio']:.3f} NaN梯度，进行零值替换")
+                        self._replace_nan_gradients()
+                    
+                    # 检查梯度是否全为零（可能表示梯度消失）
+                    if grad_stats['zero_ratio'] > 0.9:
+                        logger.warning(f"迭代 {iteration}: 梯度几乎全为零 {grad_stats['zero_ratio']:.3f}，可能存在梯度消失问题")
+                        # 不跳过，但记录警告
+                    
                     # 梯度裁剪（需要先unscale）
                     if self.config.grad_clip_norm > 0:
                         self.scaler.unscale_(self.optimizer)
-                        torch.nn.utils.clip_grad_norm_(
+                        
+                        # 强化梯度裁剪（更保守的值）
+                        actual_clip_norm = min(self.config.grad_clip_norm, 0.1)
+                        grad_norm = torch.nn.utils.clip_grad_norm_(
                             self.model.parameters(), 
-                            self.config.grad_clip_norm
+                            actual_clip_norm
                         )
+                        
+                        # 如果梯度范数过大，跳过更新
+                        if grad_norm > 10.0:
+                            logger.warning(f"迭代 {iteration}: 梯度范数过大 {grad_norm:.4f}，跳过更新")
+                            self.optimizer.zero_grad()
+                            continue
                     
                     # 优化器步进
                     self.scaler.step(self.optimizer)
@@ -492,12 +556,37 @@ class G2MILPTrainer:
                 
                 # 只在累积周期结束时进行优化器更新
                 if (iteration + 1) % accumulation_steps == 0:
-                    # 梯度裁剪
+                    # 智能梯度有效性检查（允许少量NaN）
+                    grad_stats = self._analyze_gradient_health()
+                    
+                    # 如果NaN梯度比例过高（>20%），跳过更新
+                    if grad_stats['nan_ratio'] > 0.2:
+                        logger.warning(f"迭代 {iteration}: NaN梯度比例过高 {grad_stats['nan_ratio']:.3f}，跳过更新")
+                        self.optimizer.zero_grad()
+                        continue
+                    
+                    # 如果有少量NaN梯度（≤20%），进行零值替换
+                    if grad_stats['nan_ratio'] > 0.0:
+                        logger.debug(f"迭代 {iteration}: 检测到 {grad_stats['nan_ratio']:.3f} NaN梯度，进行零值替换")
+                        self._replace_nan_gradients()
+                    
+                    # 检查梯度是否全为零（可能表示梯度消失）
+                    if grad_stats['zero_ratio'] > 0.9:
+                        logger.warning(f"迭代 {iteration}: 梯度几乎全为零 {grad_stats['zero_ratio']:.3f}，可能存在梯度消失问题")
+                    
+                    # 强化梯度裁剪
                     if self.config.grad_clip_norm > 0:
-                        torch.nn.utils.clip_grad_norm_(
+                        actual_clip_norm = min(self.config.grad_clip_norm, 0.1)
+                        grad_norm = torch.nn.utils.clip_grad_norm_(
                             self.model.parameters(), 
-                            self.config.grad_clip_norm
+                            actual_clip_norm
                         )
+                        
+                        # 如果梯度范数过大，跳过更新
+                        if grad_norm > 10.0:
+                            logger.warning(f"迭代 {iteration}: 梯度范数过大 {grad_norm:.4f}，跳过更新")
+                            self.optimizer.zero_grad()
+                            continue
                     
                     # 优化器步进
                     self.optimizer.step()
@@ -519,6 +608,8 @@ class G2MILPTrainer:
             # 梯度统计计算
             grad_stats = self._compute_gradient_stats()
             for key, value in grad_stats.items():
+                if key not in gradient_stats:
+                    gradient_stats[key] = 0  # 初始化新键
                 gradient_stats[key] += value
             
             # 更新迭代进度条
@@ -544,7 +635,7 @@ class G2MILPTrainer:
             epoch_losses[key] /= self.config.iterations_per_epoch
         
         for key in gradient_stats:
-            if key not in ['nan_grads', 'inf_grads']:
+            if key not in ['nan_grads', 'inf_grads', 'zero_grads', 'finite_grads', 'total_params']:
                 gradient_stats[key] /= self.config.iterations_per_epoch
         
         # 合并损失和梯度统计
@@ -554,10 +645,10 @@ class G2MILPTrainer:
     
     def _compute_gradient_stats(self) -> Dict[str, float]:
         """
-        计算梯度和参数统计信息
+        计算梯度和参数统计信息（增强版）
         
         Returns:
-            梯度统计字典
+            梯度统计字典，包含详细的健康状况分析
         """
         stats = {
             'grad_norm': 0.0,
@@ -565,7 +656,13 @@ class G2MILPTrainer:
             'param_norm': 0.0,
             'param_updates': 0.0,
             'nan_grads': 0,
-            'inf_grads': 0
+            'inf_grads': 0,
+            'zero_grads': 0,
+            'finite_grads': 0,
+            'nan_ratio': 0.0,
+            'finite_ratio': 0.0,
+            'zero_ratio': 0.0,
+            'total_params': 0
         }
         
         total_grad_norm = 0.0
@@ -573,33 +670,54 @@ class G2MILPTrainer:
         max_grad = 0.0
         nan_count = 0
         inf_count = 0
+        zero_count = 0
+        finite_count = 0
+        total_grad_elements = 0
         param_count = 0
         
         for name, param in self.model.named_parameters():
             if param.grad is not None:
                 param_count += 1
+                grad_flat = param.grad.flatten()
+                grad_elements = grad_flat.numel()
+                total_grad_elements += grad_elements
                 
-                # 梯度统计
-                grad_norm = param.grad.data.norm().item()
-                total_grad_norm += grad_norm ** 2
-                max_grad = max(max_grad, grad_norm)
+                # 详细统计各种梯度类型
+                nan_mask = torch.isnan(grad_flat)
+                inf_mask = torch.isinf(grad_flat)
+                zero_mask = (grad_flat == 0.0)
+                finite_mask = torch.isfinite(grad_flat)
+                
+                nan_count += nan_mask.sum().item()
+                inf_count += inf_mask.sum().item()
+                zero_count += zero_mask.sum().item()
+                finite_count += finite_mask.sum().item()
+                
+                # 只对有限梯度计算范数
+                finite_grads = grad_flat[finite_mask]
+                if len(finite_grads) > 0:
+                    grad_norm = torch.norm(finite_grads).item()
+                    total_grad_norm += grad_norm ** 2
+                    max_grad = max(max_grad, torch.max(torch.abs(finite_grads)).item())
                 
                 # 参数统计
                 param_norm = param.data.norm().item()
                 total_param_norm += param_norm ** 2
-                
-                # NaN/Inf检查
-                if torch.isnan(param.grad).any():
-                    nan_count += 1
-                if torch.isinf(param.grad).any():
-                    inf_count += 1
         
-        if param_count > 0:
+        if total_grad_elements > 0:
             stats['grad_norm'] = (total_grad_norm ** 0.5)
             stats['grad_max'] = max_grad
             stats['param_norm'] = (total_param_norm ** 0.5)
             stats['nan_grads'] = nan_count
             stats['inf_grads'] = inf_count
+            stats['zero_grads'] = zero_count
+            stats['finite_grads'] = finite_count
+            stats['total_params'] = total_grad_elements
+            
+            # 计算比例
+            stats['nan_ratio'] = nan_count / total_grad_elements
+            stats['finite_ratio'] = finite_count / total_grad_elements
+            stats['zero_ratio'] = zero_count / total_grad_elements
         
         return stats
     
@@ -686,6 +804,9 @@ class G2MILPTrainer:
             # 训练一个epoch
             train_losses = self.train_epoch(data)
             
+            # 计算当前KL权重（在这里定义，确保作用域正确）
+            current_kl_weight = self._get_kl_weight(epoch)
+            
             # 验证
             if epoch % self.config.validation_frequency == 0:
                 val_losses = self.validate(data)
@@ -764,13 +885,75 @@ class G2MILPTrainer:
                         self.training_history['diversity_scores'].append(0.0)
                         self.training_history['similarity_scores'].append(0.0)
                 
-                # 早停检查
-                if self._check_early_stopping(val_losses['total']):
-                    logger.info(f"早停在epoch {epoch}")
-                    break
+                # 高级Early Stopping检查
+                should_stop = False
+                early_stopping_result = None
+                
+                if self.early_stopping_monitor:
+                    # 准备指标字典
+                    all_metrics = {
+                        'val_loss': val_losses['total'],
+                        'train_loss': train_losses['total'],
+                        'kl_weight': current_kl_weight,
+                        'grad_norm': train_losses.get('grad_norm', 0.0),
+                        'reconstruction_loss': train_losses.get('reconstruction', 0.0),
+                        'kl_raw': train_losses.get('kl_raw', 0.0),
+                        'learning_rate': self.optimizer.param_groups[0]['lr']
+                    }
+                    
+                    # 添加质量评估指标（如果有）
+                    if quality_scores:
+                        all_metrics['generation_quality'] = quality_scores.get('overall_quality_score', 0.0)
+                        all_metrics['graph_similarity'] = quality_scores.get('graph_similarity', 0.0)
+                        all_metrics['diversity_score'] = quality_scores.get('diversity_score', 0.0)
+                    
+                    # 更新Early Stopping监控器
+                    early_stopping_result = self.early_stopping_monitor.update(
+                        epoch, 
+                        all_metrics, 
+                        model_state=self.model.state_dict()
+                    )
+                    
+                    should_stop = early_stopping_result['should_stop']
+                    
+                    # 记录Early Stopping详细信息
+                    if epoch % 50 == 0 or should_stop:  # 每50个epoch或停止时记录
+                        logger.info(f"🔍 Early Stopping Analysis (Epoch {epoch}):")
+                        logger.info(f"  ├─ Decision: {'STOP' if should_stop else 'CONTINUE'}")
+                        logger.info(f"  ├─ Reason: {early_stopping_result['decision_reason']}")
+                        logger.info(f"  ├─ Best Score: {early_stopping_result['best_score']:.6f} (Epoch {early_stopping_result['best_epoch']})")
+                        logger.info(f"  ├─ Patience: {early_stopping_result['patience_counter']}/{early_stopping_result['current_patience']}")
+                        
+                        if early_stopping_result['trend_analysis']:
+                            trend = early_stopping_result['trend_analysis']
+                            logger.info(f"  ├─ Trend: {trend['trend']} (slope: {trend['slope']:.2e}, stability: {trend['stability']:.3f})")
+                        
+                        if early_stopping_result['quality_analysis']:
+                            qa = early_stopping_result['quality_analysis']
+                            logger.info(f"  └─ Quality: {qa.get('quality_score', 'N/A'):.3f} (threshold: {self.early_stopping_monitor.config.quality_threshold})")
+                    
+                    if should_stop:
+                        logger.warning(f"🛑 高级Early Stopping触发 (Epoch {epoch})")
+                        logger.warning(f"  原因: {early_stopping_result['decision_reason']}")
+                        logger.warning(f"  置信度: {early_stopping_result.get('confidence', 0.0):.3f}")
+                        
+                        # 恢复最佳权重（如果配置启用）
+                        if self.early_stopping_monitor.should_restore_weights():
+                            best_weights = self.early_stopping_monitor.get_best_weights()
+                            if best_weights:
+                                self.model.load_state_dict(best_weights)
+                                logger.info(f"✅ 已恢复最佳模型权重 (来自Epoch {early_stopping_result['best_epoch']})")
+                        
+                        break
+                else:
+                    # 传统早停检查（兼容性）
+                    if self._check_early_stopping(val_losses['total']):
+                        logger.info(f"传统早停在epoch {epoch}")
+                        should_stop = True
+                        break
                 
                 # 增强的详细日志输出
-                current_kl_weight = self._get_kl_weight(epoch)
+                # current_kl_weight 已在上面定义
                 
                 # 计算损失组件百分比
                 train_total = train_losses['total']
@@ -902,6 +1085,11 @@ class G2MILPTrainer:
         
         # 保存训练历史
         self._save_training_history()
+        
+        # 保存Early Stopping状态
+        if self.early_stopping_monitor:
+            early_stopping_save_path = self.save_dir / "early_stopping_state.json"
+            self.early_stopping_monitor.save_state(str(early_stopping_save_path))
         
         # 生成训练报告
         return self._generate_training_report(training_time)
@@ -1341,6 +1529,18 @@ class G2MILPTrainer:
             'training_history': self.training_history
         }
         
+        # 添加Early Stopping摘要
+        if self.early_stopping_monitor:
+            early_stopping_summary = self.early_stopping_monitor.get_summary()
+            report['early_stopping'] = {
+                'strategy': early_stopping_summary['config'].strategy.value,
+                'best_score': early_stopping_summary['best_score'],
+                'best_epoch': early_stopping_summary['best_epoch'],
+                'total_improvements': early_stopping_summary['improvements'],
+                'final_patience': early_stopping_summary['final_patience'],
+                'statistics': early_stopping_summary['statistics']
+            }
+        
         # 保存报告
         report_path = self.save_dir / "training_report.json"
         with open(report_path, 'w', encoding='utf-8') as f:
@@ -1349,6 +1549,79 @@ class G2MILPTrainer:
         logger.info(f"训练报告已保存: {report_path}")
         
         return report
+    
+    def _analyze_gradient_health(self) -> Dict[str, float]:
+        """
+        分析梯度健康状况（新增方法）
+        
+        Returns:
+            包含梯度统计信息的字典
+        """
+        total_params = 0
+        nan_params = 0
+        inf_params = 0
+        zero_params = 0
+        finite_params = 0
+        grad_norm_sum = 0.0
+        
+        for param in self.model.parameters():
+            if param.grad is not None:
+                grad_flat = param.grad.flatten()
+                param_count = grad_flat.numel()
+                total_params += param_count
+                
+                # 统计NaN和无限值
+                nan_mask = torch.isnan(grad_flat)
+                inf_mask = torch.isinf(grad_flat)
+                zero_mask = (grad_flat == 0.0)
+                finite_mask = torch.isfinite(grad_flat)
+                
+                nan_params += nan_mask.sum().item()
+                inf_params += inf_mask.sum().item()
+                zero_params += zero_mask.sum().item()
+                finite_params += finite_mask.sum().item()
+                
+                # 计算有限梯度的范数
+                finite_grads = grad_flat[finite_mask]
+                if len(finite_grads) > 0:
+                    grad_norm_sum += torch.norm(finite_grads).item() ** 2
+        
+        # 计算比例
+        nan_ratio = nan_params / max(total_params, 1)
+        inf_ratio = inf_params / max(total_params, 1)
+        zero_ratio = zero_params / max(total_params, 1)
+        finite_ratio = finite_params / max(total_params, 1)
+        
+        # 计算总梯度范数
+        total_grad_norm = grad_norm_sum ** 0.5
+        
+        return {
+            'nan_ratio': nan_ratio,
+            'inf_ratio': inf_ratio,
+            'zero_ratio': zero_ratio,
+            'finite_ratio': finite_ratio,
+            'total_params': total_params,
+            'grad_norm': total_grad_norm,
+            'nan_count': nan_params,
+            'inf_count': inf_params,
+            'zero_count': zero_params
+        }
+    
+    def _replace_nan_gradients(self):
+        """
+        将NaN梯度替换为零值（新增方法）
+        """
+        replaced_count = 0
+        
+        for param in self.model.parameters():
+            if param.grad is not None:
+                nan_mask = torch.isnan(param.grad)
+                if nan_mask.any():
+                    param.grad[nan_mask] = 0.0
+                    replaced_count += nan_mask.sum().item()
+        
+        if replaced_count > 0:
+            logger.debug(f"已将 {replaced_count} 个NaN梯度替换为零值")
     
     def load_checkpoint(self, checkpoint_path: str) -> bool:
         """加载训练检查点"""

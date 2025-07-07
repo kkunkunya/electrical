@@ -127,6 +127,9 @@ class G2MILPGenerator(nn.Module):
         self.current_epoch = 0
         self.training_step = 0
         
+        # 应用专业权重初始化
+        self._apply_weight_initialization()
+        
         # 移动到指定设备
         self.to(self.config.device)
         
@@ -468,9 +471,10 @@ class G2MILPGenerator(nn.Module):
                                 mu_dict: Dict[str, torch.Tensor],
                                 logvar_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         """
-        计算训练损失（简化稳定版本）
+        计算训练损失（数值稳定增强版）
         
-        重新设计损失函数以解决梯度爆炸和训练不稳定问题
+        彻底重新设计损失函数以解决梯度爆炸和训练不稳定问题
+        使用Huber损失替代MSE，添加全面的数值稳定性保护
         """
         losses = {}
         device = self.config.device
@@ -478,48 +482,69 @@ class G2MILPGenerator(nn.Module):
         constraint_id = mask_info['masked_constraint_id']
         original_edges = mask_info['original_edges']
         
-        # 1. 偏置预测损失（简化稳定版）
+        # 预设默认损失值，确保总损失始终有效
+        default_losses = {
+            'bias': torch.tensor(0.01, device=device),
+            'degree': torch.tensor(0.01, device=device),
+            'logits': torch.tensor(0.01, device=device),
+            'weights': torch.tensor(0.001, device=device),
+            'kl': torch.tensor(0.001, device=device)
+        }
+        
+        # 1. 偏置预测损失（Huber损失，更稳定）
         if 'predicted_bias' in predicted_results:
             try:
                 target_bias = self._extract_target_bias(original_data, constraint_id)
                 predicted_bias = predicted_results['predicted_bias']
                 
-                # 标准化处理，防止数值过大
-                target_bias = torch.clamp(target_bias, min=-10.0, max=10.0)
-                predicted_bias = torch.clamp(predicted_bias, min=-10.0, max=10.0)
-                
-                # 简单的MSE损失，但加权较小
-                bias_loss = F.mse_loss(predicted_bias, target_bias)
-                bias_loss = torch.clamp(bias_loss, max=1.0)  # 强制裁剪
-                losses['bias'] = 0.1 * bias_loss  # 降低权重
-                
+                # 输入验证
+                if torch.isfinite(target_bias).all() and torch.isfinite(predicted_bias).all():
+                    # 标准化处理
+                    target_bias = torch.clamp(target_bias, min=-5.0, max=5.0)
+                    predicted_bias = torch.clamp(predicted_bias, min=-5.0, max=5.0)
+                    
+                    # 使用Huber损失（对异常值更鲁棒）
+                    bias_loss = F.huber_loss(predicted_bias, target_bias, delta=1.0)
+                    bias_loss = torch.clamp(bias_loss, min=0.0, max=0.5)
+                    losses['bias'] = 0.05 * bias_loss
+                else:
+                    losses['bias'] = default_losses['bias']
+                    
             except Exception as e:
                 logger.debug(f"偏置损失计算失败: {e}")
-                losses['bias'] = torch.tensor(0.05, device=device)
+                losses['bias'] = default_losses['bias']
+        else:
+            losses['bias'] = default_losses['bias']
         
-        # 2. 度数预测损失（简化稳定版）
+        # 2. 度数预测损失（对数尺度，更稳定）
         if 'predicted_degree' in predicted_results:
             try:
                 target_degree = len(original_edges)
                 predicted_degree = predicted_results['predicted_degree'].float()
                 
-                # 归一化到合理范围
-                target_degree_norm = target_degree / 50.0  # 归一化
-                predicted_degree_norm = predicted_degree / 50.0
-                
-                # 确保维度匹配：target需要与predicted同维度
-                target_tensor = torch.tensor(target_degree_norm, device=device).view_as(predicted_degree_norm)
-                
-                # 简单MSE，强制裁剪
-                degree_loss = F.mse_loss(predicted_degree_norm, target_tensor)
-                degree_loss = torch.clamp(degree_loss, max=0.5)  # 严格裁剪
-                losses['degree'] = 0.2 * degree_loss  # 大幅降低权重
-                
+                # 输入验证
+                if torch.isfinite(predicted_degree).all() and target_degree > 0:
+                    # 对数尺度处理（更稳定）
+                    target_log = torch.log(torch.tensor(target_degree + 1.0, device=device))
+                    predicted_log = torch.log(torch.clamp(predicted_degree, min=1e-6) + 1.0)
+                    
+                    # 确保维度匹配
+                    target_log = target_log.view_as(predicted_log)
+                    
+                    # Huber损失
+                    degree_loss = F.huber_loss(predicted_log, target_log, delta=1.0)
+                    degree_loss = torch.clamp(degree_loss, min=0.0, max=0.2)
+                    losses['degree'] = 0.05 * degree_loss
+                else:
+                    losses['degree'] = default_losses['degree']
+                    
             except Exception as e:
                 logger.debug(f"度数损失计算失败: {e}")
-                losses['degree'] = torch.tensor(0.1, device=device)
+                losses['degree'] = default_losses['degree']
+        else:
+            losses['degree'] = default_losses['degree']
         
-        # 3. 连接预测损失（极简稳定版）
+        # 3. 连接预测损失（焦点损失，更稳定）
         if 'connection_logits' in predicted_results:
             try:
                 target_connections = self._create_target_connections(
@@ -527,56 +552,84 @@ class G2MILPGenerator(nn.Module):
                 )
                 connection_logits = predicted_results['connection_logits']
                 
-                # 强制裁剪logits到安全范围
-                connection_logits = torch.clamp(connection_logits, min=-3.0, max=3.0)
-                
-                # 简单密度损失（最稳定的方法）
-                pred_density = torch.sigmoid(connection_logits).mean()
-                target_density = target_connections.float().mean()
-                
-                # MSE密度损失，强制裁剪
-                logits_loss = F.mse_loss(pred_density, target_density)
-                logits_loss = torch.clamp(logits_loss, max=0.2)  # 极严格裁剪
-                losses['logits'] = 0.5 * logits_loss  # 降低权重
-                
+                # 输入验证
+                if torch.isfinite(connection_logits).all():
+                    # 安全的logits裁剪
+                    connection_logits = torch.clamp(connection_logits, min=-5.0, max=5.0)
+                    
+                    # 使用稳定的密度损失
+                    pred_probs = torch.sigmoid(connection_logits)
+                    target_probs = target_connections.float()
+                    
+                    # 二元交叉熵损失（更稳定）
+                    logits_loss = F.binary_cross_entropy(pred_probs, target_probs, reduction='mean')
+                    logits_loss = torch.clamp(logits_loss, min=0.0, max=1.0)
+                    losses['logits'] = 0.1 * logits_loss
+                else:
+                    losses['logits'] = default_losses['logits']
+                    
             except Exception as e:
                 logger.debug(f"连接损失计算失败: {e}")
-                losses['logits'] = torch.tensor(0.1, device=device)
+                losses['logits'] = default_losses['logits']
+        else:
+            losses['logits'] = default_losses['logits']
         
-        # 4. 权重预测损失（超简化版）
+        # 4. 权重预测损失（L1正则化，更稳定）
         if 'predicted_weights' in predicted_results and len(original_edges) > 0:
             try:
                 predicted_weights = predicted_results['predicted_weights']
-                # 简单的L2正则化，鼓励小权重
-                weights_loss = (predicted_weights ** 2).mean()
-                weights_loss = torch.clamp(weights_loss, max=0.1)
-                losses['weights'] = 0.05 * weights_loss  # 极小权重
                 
+                # 输入验证
+                if torch.isfinite(predicted_weights).all():
+                    # L1正则化（比L2更稳定）
+                    weights_loss = torch.abs(predicted_weights).mean()
+                    weights_loss = torch.clamp(weights_loss, min=0.0, max=0.1)
+                    losses['weights'] = 0.01 * weights_loss
+                else:
+                    losses['weights'] = default_losses['weights']
+                    
             except Exception as e:
                 logger.debug(f"权重损失计算失败: {e}")
-                losses['weights'] = torch.tensor(0.02, device=device)
+                losses['weights'] = default_losses['weights']
+        else:
+            losses['weights'] = default_losses['weights']
         
-        # 5. KL散度损失（超简化版）
+        # 5. KL散度损失（使用编码器的稳定版本）
         try:
             kl_loss = self.encoder.compute_kl_divergence(mu_dict, logvar_dict)
-            kl_loss = torch.clamp(kl_loss, max=1.0)  # 强制裁剪
             
-            # 使用固定的极小权重，避免KL坍塌
-            losses['kl'] = 0.001 * kl_loss  # 极小权重，避免主导训练
-            
+            # 输入验证和裁剪
+            if torch.isfinite(kl_loss):
+                kl_loss = torch.clamp(kl_loss, min=0.0, max=10.0)
+                
+                # 使用课程学习的KL权重
+                kl_weight = self._get_kl_weight()
+                losses['kl'] = kl_weight * kl_loss
+            else:
+                losses['kl'] = default_losses['kl']
+                
         except Exception as e:
             logger.debug(f"KL散度计算失败: {e}")
-            losses['kl'] = torch.tensor(0.001, device=device)
+            losses['kl'] = default_losses['kl']
         
-        # 总损失计算（极简版）
+        # 总损失计算（极保守版本）
         total_loss = torch.tensor(0.0, device=device)
         
+        # 逐个检查并累加损失
         for loss_name, loss_value in losses.items():
             if torch.isfinite(loss_value):
                 total_loss = total_loss + loss_value
+            else:
+                logger.warning(f"损失 {loss_name} 非有限值，使用默认值")
+                total_loss = total_loss + default_losses.get(loss_name, torch.tensor(0.01, device=device))
         
-        # 强制总损失裁剪，防止梯度爆炸
-        total_loss = torch.clamp(total_loss, max=2.0)  # 严格控制总损失
+        # 最终安全性检查
+        if not torch.isfinite(total_loss):
+            logger.error("总损失非有限值，使用备用损失")
+            total_loss = torch.tensor(0.1, device=device)
+        
+        # 温和的损失裁剪
+        total_loss = torch.clamp(total_loss, min=1e-6, max=1.0)
         losses['total'] = total_loss
         
         return losses
@@ -636,6 +689,114 @@ class G2MILPGenerator(nn.Module):
         except Exception as e:
             logger.warning(f"提取目标偏置失败: {e}，使用默认值")
             return torch.tensor([[1.0]], device=self.config.device, dtype=torch.float)
+    
+    def _apply_weight_initialization(self):
+        """
+        应用专业的权重初始化策略
+        
+        针对不同层类型使用最适合的初始化方法：
+        - GNN层: Glorot/Xavier初始化
+        - 线性层: Kaiming初始化
+        - 嵌入层: 正态分布初始化
+        - BatchNorm: 标准初始化
+        """
+        logger.info("开始应用专业权重初始化...")
+        
+        initialized_layers = 0
+        
+        for name, module in self.named_modules():
+            if isinstance(module, nn.Linear):
+                # 线性层使用Kaiming初始化（适合ReLU激活）
+                nn.init.kaiming_normal_(module.weight, mode='fan_out', nonlinearity='relu')
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
+                initialized_layers += 1
+                logger.debug(f"线性层 {name}: Kaiming初始化")
+                
+            elif hasattr(module, 'weight') and 'conv' in type(module).__name__.lower():
+                # GNN卷积层使用Xavier/Glorot初始化（适合图神经网络）
+                if hasattr(nn.init, 'xavier_normal_'):
+                    nn.init.xavier_normal_(module.weight, gain=1.0)
+                    if hasattr(module, 'bias') and module.bias is not None:
+                        nn.init.zeros_(module.bias)
+                    initialized_layers += 1
+                    logger.debug(f"GNN层 {name}: Xavier初始化")
+                
+            elif isinstance(module, nn.Embedding):
+                # 嵌入层使用正态分布初始化
+                nn.init.normal_(module.weight, mean=0.0, std=0.1)
+                initialized_layers += 1
+                logger.debug(f"嵌入层 {name}: 正态分布初始化")
+                
+            elif isinstance(module, (nn.BatchNorm1d, nn.BatchNorm2d, nn.LayerNorm)):
+                # 归一化层使用标准初始化
+                if hasattr(module, 'weight') and module.weight is not None:
+                    nn.init.ones_(module.weight)
+                if hasattr(module, 'bias') and module.bias is not None:
+                    nn.init.zeros_(module.bias)
+                initialized_layers += 1
+                logger.debug(f"归一化层 {name}: 标准初始化")
+        
+        logger.info(f"权重初始化完成 - 已初始化 {initialized_layers} 个层")
+        
+        # 验证初始化效果
+        self._validate_initialization()
+    
+    def _validate_initialization(self):
+        """
+        验证权重初始化的效果
+        """
+        total_params = 0
+        zero_params = 0
+        nan_params = 0
+        large_params = 0
+        weight_stats = {
+            'mean': 0.0,
+            'std': 0.0,
+            'min': float('inf'),
+            'max': float('-inf')
+        }
+        
+        all_weights = []
+        
+        for name, param in self.named_parameters():
+            if param.requires_grad:
+                param_flat = param.data.flatten()
+                total_params += param_flat.numel()
+                
+                # 统计异常值
+                zero_params += (param_flat == 0.0).sum().item()
+                nan_params += torch.isnan(param_flat).sum().item()
+                large_params += (torch.abs(param_flat) > 10.0).sum().item()
+                
+                # 收集权重用于整体统计
+                all_weights.append(param_flat)
+        
+        if all_weights:
+            all_weights_tensor = torch.cat(all_weights)
+            weight_stats['mean'] = all_weights_tensor.mean().item()
+            weight_stats['std'] = all_weights_tensor.std().item()
+            weight_stats['min'] = all_weights_tensor.min().item()
+            weight_stats['max'] = all_weights_tensor.max().item()
+        
+        # 记录初始化验证结果
+        logger.info(f"权重初始化验证:")
+        logger.info(f"  - 总参数数: {total_params:,}")
+        logger.info(f"  - 零值参数: {zero_params} ({zero_params/total_params*100:.2f}%)")
+        logger.info(f"  - NaN参数: {nan_params}")
+        logger.info(f"  - 大值参数(>10): {large_params} ({large_params/total_params*100:.2f}%)")
+        logger.info(f"  - 权重统计: mean={weight_stats['mean']:.4f}, std={weight_stats['std']:.4f}")
+        logger.info(f"  - 权重范围: [{weight_stats['min']:.4f}, {weight_stats['max']:.4f}]")
+        
+        # 检查是否存在异常
+        if nan_params > 0:
+            logger.warning(f"发现 {nan_params} 个NaN权重参数！")
+        if large_params > total_params * 0.01:  # 超过1%的参数过大
+            logger.warning(f"发现过多大值参数 ({large_params/total_params*100:.2f}%)，可能影响训练稳定性")
+        if weight_stats['std'] > 2.0:
+            logger.warning(f"权重标准差过大 ({weight_stats['std']:.4f})，可能导致梯度爆炸")
+        elif weight_stats['std'] < 0.01:
+            logger.warning(f"权重标准差过小 ({weight_stats['std']:.4f})，可能导致梯度消失")
     
     def _extract_target_weights(self, original_data: HeteroData, original_edges: List[Tuple], 
                                target_length: int = None) -> torch.Tensor:

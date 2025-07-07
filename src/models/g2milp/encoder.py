@@ -292,9 +292,10 @@ class G2MILPEncoder(nn.Module):
     def sample_latent_variables(self, mu_dict: Dict[str, torch.Tensor], 
                               logvar_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         """
-        从潜变量分布中采样
+        从潜变量分布中采样（数值稳定版）
         
         实现重参数化技巧：z = μ + σ * ε，其中ε ~ N(0,I)
+        添加数值稳定性检查，防止梯度爆炸
         """
         z_dict = {}
         
@@ -302,10 +303,28 @@ class G2MILPEncoder(nn.Module):
             mu = mu_dict[node_type]
             logvar = logvar_dict[node_type]
             
-            # 重参数化采样
+            # 数值稳定性检查和裁剪
+            mu = torch.clamp(mu, min=-10.0, max=10.0)
+            logvar = torch.clamp(logvar, min=-10.0, max=10.0)  # 防止exp(logvar)过大
+            
+            # 检查是否有NaN或无限值
+            if not torch.isfinite(mu).all():
+                logger.warning(f"检测到{node_type}节点的mu中有非有限值，使用零值替换")
+                mu = torch.zeros_like(mu)
+            if not torch.isfinite(logvar).all():
+                logger.warning(f"检测到{node_type}节点的logvar中有非有限值，使用零值替换")
+                logvar = torch.zeros_like(logvar)
+            
+            # 重参数化采样（数值稳定版）
             std = torch.exp(0.5 * logvar)
+            # 进一步裁剪std，防止过大
+            std = torch.clamp(std, min=1e-6, max=10.0)
+            
             eps = torch.randn_like(std)
-            z_dict[node_type] = mu + eps * std
+            z = mu + eps * std
+            
+            # 最终输出裁剪
+            z_dict[node_type] = torch.clamp(z, min=-20.0, max=20.0)
         
         return z_dict
     
@@ -336,21 +355,57 @@ class G2MILPEncoder(nn.Module):
     def compute_kl_divergence(self, mu_dict: Dict[str, torch.Tensor], 
                             logvar_dict: Dict[str, torch.Tensor]) -> torch.Tensor:
         """
-        计算KL散度损失
+        计算KL散度损失（数值稳定版）
         
         KL[q(z|x) || p(z)] = 0.5 * Σ(1 + log(σ²) - μ² - σ²)
+        添加数值稳定性保护，防止NaN和无限值
         """
         kl_loss = 0.0
+        device = next(iter(mu_dict.values())).device
         
         for node_type in mu_dict:
             mu = mu_dict[node_type]
             logvar = logvar_dict[node_type]
             
-            # KL散度公式
-            kl = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=1)
-            kl_loss += torch.mean(kl)
+            # 数值稳定性预处理
+            mu = torch.clamp(mu, min=-10.0, max=10.0)
+            logvar = torch.clamp(logvar, min=-10.0, max=10.0)
+            
+            # 检查输入有效性
+            if not torch.isfinite(mu).all() or not torch.isfinite(logvar).all():
+                logger.warning(f"KL散度计算中检测到{node_type}节点的非有限值，跳过该节点")
+                continue
+            
+            try:
+                # KL散度公式（数值稳定版）
+                mu_sq = mu.pow(2)
+                logvar_exp = torch.exp(logvar)
+                
+                # 进一步防护
+                mu_sq = torch.clamp(mu_sq, max=100.0)
+                logvar_exp = torch.clamp(logvar_exp, max=100.0)
+                
+                kl = -0.5 * torch.sum(1 + logvar - mu_sq - logvar_exp, dim=1)
+                
+                # 检查KL散度的有效性
+                if torch.isfinite(kl).all():
+                    kl_mean = torch.mean(kl)
+                    # 裁剪KL散度，防止过大
+                    kl_mean = torch.clamp(kl_mean, min=0.0, max=50.0)
+                    kl_loss += kl_mean
+                else:
+                    logger.warning(f"KL散度计算产生非有限值，使用默认值替代")
+                    kl_loss += torch.tensor(0.1, device=device)
+                    
+            except Exception as e:
+                logger.warning(f"KL散度计算异常: {e}，使用默认值")
+                kl_loss += torch.tensor(0.1, device=device)
         
-        return kl_loss
+        # 最终结果稳定性检查
+        if isinstance(kl_loss, (int, float)):
+            kl_loss = torch.tensor(float(kl_loss), device=device)
+        
+        return torch.clamp(kl_loss, min=0.0, max=100.0)
 
 
 def create_encoder(constraint_feature_dim: int = 16,

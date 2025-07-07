@@ -827,8 +827,13 @@ class G2MILPInference:
         return dynamic_config
     
     def _compute_distribution_similarity(self, dist1: torch.Tensor, dist2: torch.Tensor) -> float:
-        """计算两个分布的相似度"""
+        """计算两个分布的相似度（数值稳定性增强版）"""
         try:
+            # 数值稳定性检查
+            if not (torch.isfinite(dist1).all() and torch.isfinite(dist2).all()):
+                logger.warning("分布包含非有限值")
+                return 0.5
+            
             # 填充到相同长度
             max_len = max(len(dist1), len(dist2))
             if len(dist1) < max_len:
@@ -836,30 +841,92 @@ class G2MILPInference:
             if len(dist2) < max_len:
                 dist2 = F.pad(dist2, (0, max_len - len(dist2)))
             
+            # 检查是否为零分布
+            sum1 = dist1.sum().float()
+            sum2 = dist2.sum().float()
+            
+            if sum1 < 1e-8 and sum2 < 1e-8:
+                return 1.0  # 两个都是零分布，认为相似
+            elif sum1 < 1e-8 or sum2 < 1e-8:
+                return 0.0  # 一个是零分布，一个不是
+            
             # 归一化为概率分布
-            dist1_norm = dist1.float() / (dist1.sum().float() + 1e-8)
-            dist2_norm = dist2.float() / (dist2.sum().float() + 1e-8)
+            dist1_norm = dist1.float() / sum1
+            dist2_norm = dist2.float() / sum2
             
             # 计算多种相似度指标的平均值
-            # 1. 余弦相似度
-            cosine_sim = F.cosine_similarity(
-                dist1_norm.unsqueeze(0), dist2_norm.unsqueeze(0)
-            ).item()
+            similarities = []
             
-            # 2. KL散度相似度 (1 - normalized_kl)
-            kl_div = F.kl_div(
-                torch.log(dist1_norm + 1e-8), dist2_norm, reduction='sum'
-            ).item()
-            kl_sim = np.exp(-kl_div)  # 转换为相似度
+            # 1. 余弦相似度（数值稳定版）
+            try:
+                norm1 = torch.norm(dist1_norm)
+                norm2 = torch.norm(dist2_norm)
+                
+                if norm1 < 1e-8 or norm2 < 1e-8:
+                    cosine_sim = 1.0 if (norm1 < 1e-8 and norm2 < 1e-8) else 0.0
+                else:
+                    cosine_sim = F.cosine_similarity(
+                        dist1_norm.unsqueeze(0), dist2_norm.unsqueeze(0)
+                    ).item()
+                    
+                    if not np.isfinite(cosine_sim):
+                        cosine_sim = 0.5
+                    else:
+                        cosine_sim = max(0.0, min(1.0, cosine_sim))
+                        
+                similarities.append(cosine_sim)
+            except Exception as e:
+                logger.debug(f"余弦相似度计算失败: {e}")
+                similarities.append(0.5)
             
-            # 3. JS散度相似度
-            m = (dist1_norm + dist2_norm) / 2
-            js_div = 0.5 * F.kl_div(torch.log(dist1_norm + 1e-8), m, reduction='sum') + \
-                     0.5 * F.kl_div(torch.log(dist2_norm + 1e-8), m, reduction='sum')
-            js_sim = np.exp(-js_div.item())
+            # 2. KL散度相似度（数值稳定版）
+            try:
+                # 添加平滑项以避免log(0)
+                epsilon = 1e-10
+                dist1_smooth = dist1_norm + epsilon
+                dist2_smooth = dist2_norm + epsilon
+                
+                kl_div = F.kl_div(
+                    torch.log(dist1_smooth), dist2_smooth, reduction='sum'
+                ).item()
+                
+                if not np.isfinite(kl_div) or kl_div < 0:
+                    kl_sim = 0.5
+                else:
+                    kl_sim = np.exp(-min(kl_div, 10.0))  # 限制最大KL散度
+                    
+                similarities.append(kl_sim)
+            except Exception as e:
+                logger.debug(f"KL散度计算失败: {e}")
+                similarities.append(0.5)
+            
+            # 3. JS散度相似度（数值稳定版）
+            try:
+                epsilon = 1e-10
+                dist1_smooth = dist1_norm + epsilon
+                dist2_smooth = dist2_norm + epsilon
+                m = (dist1_smooth + dist2_smooth) / 2
+                
+                js_div1 = F.kl_div(torch.log(dist1_smooth), m, reduction='sum')
+                js_div2 = F.kl_div(torch.log(dist2_smooth), m, reduction='sum')
+                js_div = 0.5 * (js_div1 + js_div2).item()
+                
+                if not np.isfinite(js_div) or js_div < 0:
+                    js_sim = 0.5
+                else:
+                    js_sim = np.exp(-min(js_div, 10.0))  # 限制最大JS散度
+                    
+                similarities.append(js_sim)
+            except Exception as e:
+                logger.debug(f"JS散度计算失败: {e}")
+                similarities.append(0.5)
             
             # 返回多种相似度的平均值
-            return (cosine_sim + kl_sim + js_sim) / 3.0
+            if similarities:
+                final_sim = sum(similarities) / len(similarities)
+                return max(0.0, min(1.0, final_sim))
+            else:
+                return 0.5
             
         except Exception as e:
             logger.warning(f"分布相似度计算异常: {e}")
@@ -977,7 +1044,7 @@ class G2MILPInference:
             return 0.5
     
     def _compute_feature_similarity_detailed(self, features1: torch.Tensor, features2: torch.Tensor) -> List[float]:
-        """计算特征的分维度相似度"""
+        """计算特征的分维度相似度（数值稳定性增强版）"""
         similarities = []
         
         try:
@@ -986,35 +1053,130 @@ class G2MILPInference:
                 dim1_values = features1[:, dim]
                 dim2_values = features2[:, dim]
                 
-                # 多种相似度指标
-                # 1. 余弦相似度
-                cosine_sim = F.cosine_similarity(
-                    dim1_values.unsqueeze(0), dim2_values.unsqueeze(0)
-                ).item()
+                # 数值稳定性检查
+                dim1_numpy = dim1_values.cpu().numpy()
+                dim2_numpy = dim2_values.cpu().numpy()
                 
-                # 2. 皮尔逊相关系数
-                pearson_corr = np.corrcoef(
-                    dim1_values.cpu().numpy(), dim2_values.cpu().numpy()
-                )[0, 1]
-                if np.isnan(pearson_corr):
-                    pearson_corr = 0.0
+                # 检查是否包含NaN或无穷值
+                if not (np.isfinite(dim1_numpy).all() and np.isfinite(dim2_numpy).all()):
+                    logger.warning(f"特征维度 {dim} 包含非有限值，跳过该维度")
+                    similarities.append(0.5)
+                    continue
                 
-                # 3. 分布相似度（基于统计特征）
-                mean_sim = 1.0 - abs(dim1_values.mean() - dim2_values.mean()) / (
-                    abs(dim1_values.mean()) + abs(dim2_values.mean()) + 1e-8
-                )
-                std_sim = 1.0 - abs(dim1_values.std() - dim2_values.std()) / (
-                    dim1_values.std() + dim2_values.std() + 1e-8
-                )
+                # 1. 余弦相似度（数值稳定版）
+                try:
+                    # 检查向量是否为零向量
+                    norm1 = torch.norm(dim1_values)
+                    norm2 = torch.norm(dim2_values)
+                    
+                    if norm1 < 1e-8 or norm2 < 1e-8:
+                        # 零向量情况：如果两个都是零向量则相似度为1，否则为0
+                        cosine_sim = 1.0 if (norm1 < 1e-8 and norm2 < 1e-8) else 0.0
+                    else:
+                        cosine_sim = F.cosine_similarity(
+                            dim1_values.unsqueeze(0), dim2_values.unsqueeze(0)
+                        ).item()
+                        
+                        # 确保余弦相似度在有效范围内
+                        if not np.isfinite(cosine_sim):
+                            cosine_sim = 0.0
+                        else:
+                            cosine_sim = max(-1.0, min(1.0, cosine_sim))
+                            # 转换到 [0, 1] 范围
+                            cosine_sim = (cosine_sim + 1.0) / 2.0
+                            
+                except Exception as e:
+                    logger.debug(f"余弦相似度计算失败 (dim {dim}): {e}")
+                    cosine_sim = 0.5
                 
-                # 综合相似度
-                dim_similarity = (cosine_sim + pearson_corr + mean_sim.item() + std_sim.item()) / 4.0
-                similarities.append(max(0.0, min(1.0, dim_similarity)))
+                # 2. 皮尔逊相关系数（数值稳定版）
+                try:
+                    # 检查标准差是否为零
+                    std1 = np.std(dim1_numpy)
+                    std2 = np.std(dim2_numpy)
+                    
+                    if std1 < 1e-8 or std2 < 1e-8:
+                        # 标准差为零的情况：检查均值是否相等
+                        mean1 = np.mean(dim1_numpy)
+                        mean2 = np.mean(dim2_numpy)
+                        
+                        if abs(mean1 - mean2) < 1e-8:
+                            pearson_corr = 1.0  # 完全相同的常数值
+                        else:
+                            pearson_corr = 0.0  # 不同的常数值
+                    else:
+                        # 标准相关系数计算
+                        corr_matrix = np.corrcoef(dim1_numpy, dim2_numpy)
+                        
+                        if corr_matrix.shape == (2, 2):
+                            pearson_corr = corr_matrix[0, 1]
+                        else:
+                            pearson_corr = 0.0
+                        
+                        # 检查结果的有效性
+                        if not np.isfinite(pearson_corr):
+                            pearson_corr = 0.0
+                        else:
+                            # 转换到 [0, 1] 范围
+                            pearson_corr = (pearson_corr + 1.0) / 2.0
+                            
+                except Exception as e:
+                    logger.debug(f"皮尔逊相关系数计算失败 (dim {dim}): {e}")
+                    pearson_corr = 0.5
+                
+                # 3. 分布相似度（基于统计特征，数值稳定版）
+                try:
+                    mean1 = dim1_values.mean().item()
+                    mean2 = dim2_values.mean().item()
+                    std1 = dim1_values.std().item()
+                    std2 = dim2_values.std().item()
+                    
+                    # 均值相似度
+                    if abs(mean1) + abs(mean2) < 1e-8:
+                        mean_sim = 1.0  # 两个均值都接近0
+                    else:
+                        mean_sim = 1.0 - abs(mean1 - mean2) / (abs(mean1) + abs(mean2) + 1e-8)
+                    
+                    # 标准差相似度  
+                    if std1 + std2 < 1e-8:
+                        std_sim = 1.0  # 两个标准差都接近0
+                    else:
+                        std_sim = 1.0 - abs(std1 - std2) / (std1 + std2 + 1e-8)
+                    
+                    # 确保结果在有效范围内
+                    mean_sim = max(0.0, min(1.0, mean_sim))
+                    std_sim = max(0.0, min(1.0, std_sim))
+                    
+                except Exception as e:
+                    logger.debug(f"分布相似度计算失败 (dim {dim}): {e}")
+                    mean_sim = 0.5
+                    std_sim = 0.5
+                
+                # 4. 综合相似度
+                try:
+                    dim_similarity = (cosine_sim + pearson_corr + mean_sim + std_sim) / 4.0
+                    dim_similarity = max(0.0, min(1.0, dim_similarity))
+                    
+                    if not np.isfinite(dim_similarity):
+                        dim_similarity = 0.5
+                        
+                    similarities.append(dim_similarity)
+                    
+                except Exception as e:
+                    logger.debug(f"综合相似度计算失败 (dim {dim}): {e}")
+                    similarities.append(0.5)
                 
         except Exception as e:
             logger.warning(f"特征相似度计算异常: {e}")
             # 返回默认相似度
             similarities = [0.5] * min(features1.size(1), features2.size(1))
+        
+        # 最终有效性检查
+        if not similarities:
+            similarities = [0.5] * min(features1.size(1), features2.size(1))
+        
+        # 确保所有相似度都在有效范围内
+        similarities = [max(0.0, min(1.0, sim)) for sim in similarities]
         
         return similarities
     
